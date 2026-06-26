@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "Ecommerce API",
   "main": "server.js",
   "type": "module",
   "scripts": {
@@ -9,9 +9,7 @@
     "server": "nodemon server.js",
     "build": "echo 'No build needed'",
     "seed": "node scripts/seedProducts.js",
-    "seed:reset": "node scripts/seedProducts.js",
-    "vercel-install": "npm install --legacy-peer-deps",
-    "vercel-build": "npm run vercel-install && npm start"
+    "seed:reset": "node scripts/seedProducts.js"
   },
   "keywords": [],
   "author": "",
