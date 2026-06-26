@@ -1,0 +1,72 @@
+# Backend Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Build and distribution
+dist/
+build/
+*.log
+
+# Uploaded files
+uploads/
+temp/
+public/uploads/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# MongoDB data
+data/
+dump/
+
+# Logs
+logs/
+*.log
+logs/*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+test-results/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Secrets
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+.env.*
+
+# Temporary files
+tmp/
+temp/
+*.tmp
