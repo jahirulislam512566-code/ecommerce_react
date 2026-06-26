@@ -8,6 +8,7 @@
     "start": "node server.js",
     "server": "nodemon server.js",
     "build": "echo 'No build needed'",
+    "vercel-build": "npm install --legacy-peer-deps",
     "seed": "node scripts/seedProducts.js",
     "seed:reset": "node scripts/seedProducts.js"
   },
