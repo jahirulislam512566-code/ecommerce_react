@@ -4,6 +4,7 @@
   "description": "Ecommerce API",
   "main": "server.js",
   "type": "module",
+ "nodemon": "server start",
   "scripts": {
     "start": "node server.js",
     "server": "nodemon server.js",

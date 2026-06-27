@@ -9,77 +9,94 @@ import {
     verifyStripe, 
     verifyRazorpay,
     verifyBkash,
-    verifyNagad,
     userOrders, 
     updateStatus, 
     allOrders,
     getOrderById
 } from '../controllers/orderController.js';
+
 import { admin, protect } from '../middleware/authMiddleware.js';
 
 const orderRouter = express.Router();
 
+
 // ============================================================
-// Admin Routes
+// ROOT ROUTE (fixes /api/order 404)
+// ============================================================
+orderRouter.get('/', (req, res) => {
+    res.json({
+        success: true,
+        message: 'Order API is working',
+        endpoints: {
+            admin: ['/list', '/status'],
+            user: ['/userorders', '/:orderId'],
+            orders: ['/place'],
+            payments: ['/bkash',  '/stripe', '/razorpay', '/rocket']
+        }
+    });
+});
+
+
+// ============================================================
+// ADMIN ROUTES
 // ============================================================
 orderRouter.get('/list', protect, admin, allOrders);
 orderRouter.post('/status', protect, admin, updateStatus);
 
-// ============================================================
-// User Routes
-// ============================================================
-orderRouter.post('/userorders', protect, userOrders);
-orderRouter.get('/:orderId', protect, getOrderById);
 
 // ============================================================
-// Payment Routes - COD
+// USER ROUTES
+// ============================================================
+orderRouter.post('/userorders', protect, userOrders);
+
+
+// ============================================================
+// PAYMENT ROUTES - COD
 // ============================================================
 orderRouter.post('/place', protect, placeOrder);
 
+
 // ============================================================
-// Payment Routes - bKash
+// PAYMENT ROUTES - bKash
 // ============================================================
 orderRouter.post('/bkash', protect, placeOrderBkash);
-orderRouter.get('/bkash/verify', verifyBkash);
 orderRouter.post('/bkash/verify', verifyBkash);
 
-// ============================================================
-// Payment Routes - Nagad
-// ============================================================
-orderRouter.post('/nagad', protect, placeOrderNagad);
-orderRouter.get('/nagad/verify', verifyNagad);
-orderRouter.post('/nagad/verify', verifyNagad);
 
 // ============================================================
-// Payment Routes - Stripe
+// PAYMENT ROUTES - Nagad
+// ============================================================
+// orderRouter.post('/nagad', protect, placeOrderNagad);
+// orderRouter.post('/nagad/verify', verifyNagad);
+
+
+// ============================================================
+// PAYMENT ROUTES - Stripe
 // ============================================================
 orderRouter.post('/stripe', protect, placeOrderStripe);
-orderRouter.post('/verifyStripe', protect, verifyStripe);
+orderRouter.post('/stripe/verify', protect, verifyStripe);
+
 
 // ============================================================
-// Payment Routes - Razorpay
+// PAYMENT ROUTES - Razorpay
 // ============================================================
 orderRouter.post('/razorpay', protect, placeOrderRazorpay);
-orderRouter.post('/verifyRazorpay', protect, verifyRazorpay);
+orderRouter.post('/razorpay/verify', protect, verifyRazorpay);
+
 
 // ============================================================
-// Payment Routes - Rocket (Coming Soon)
+// PAYMENT ROUTES - Rocket (Coming Soon)
 // ============================================================
 orderRouter.post('/rocket', protect, placeOrderRocket);
 
-// ============================================================
-// Health Check Route
-// ============================================================
-orderRouter.get('/health', (req, res) => {
-    res.json({ 
-        success: true, 
-        message: 'Order service is running',
-        paymentMethods: ['COD', 'bKash', 'Nagad', 'Stripe', 'Razorpay', 'Rocket'],
-        timestamp: new Date().toISOString()
-    });
-});
 
 // ============================================================
-// Export
+// IMPORTANT: PUT THIS AT THE BOTTOM
+// ============================================================
+orderRouter.get('/:orderId', protect, getOrderById);
+
+
+// ============================================================
+// EXPORT
 // ============================================================
 export default orderRouter;

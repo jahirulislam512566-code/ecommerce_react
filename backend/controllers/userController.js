@@ -1,172 +1,257 @@
 import User from "../models/userModel.js";
 import jwt from "jsonwebtoken";
 import validator from "validator";
-import bcrypt from "bcrypt";
 
-/**
- * @helper Create JWT Token
- */
-const createToken = (id) => {
-    return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '3d' });
+/* =========================
+   JWT Token Helper
+========================= */
+const createToken = (id, role = "user") => {
+    if (!process.env.JWT_SECRET) {
+        throw new Error("JWT_SECRET is not defined");
+    }
+
+    return jwt.sign({ id, role }, process.env.JWT_SECRET, {
+        expiresIn: "3d",
+    });
 };
 
-/**
- * @route   POST /api/user/login
- * @desc    Login for regular customers
- */
+/* =========================
+   LOGIN USER
+========================= */
 export const loginUser = async (req, res) => {
     try {
         const { email, password } = req.body;
 
         if (!email || !password) {
-            return res.status(400).json({ success: false, message: "All fields are required" });
+            return res.status(400).json({
+                success: false,
+                message: "Email and password are required",
+            });
         }
 
         const cleanEmail = email.toLowerCase().trim();
 
-        // Find user and explicitly include password
         const user = await User.findOne({ email: cleanEmail }).select("+password");
 
         if (!user) {
-            return res.status(401).json({ success: false, message: "User doesn't exist" });
+            return res.status(401).json({
+                success: false,
+                message: "User not found",
+            });
         }
 
-        // Use the schema built-in method we created!
+        if (!user.comparePassword) {
+            return res.status(500).json({
+                success: false,
+                message: "Password comparison method missing in User model",
+            });
+        }
+
         const isMatch = await user.comparePassword(password);
 
-        if (isMatch) {
-            const token = createToken(user._id);
-            return res.status(200).json({ 
-                success: true, 
-                token,
-                user: { id: user._id, name: user.name, email: user.email } 
+        if (!isMatch) {
+            return res.status(401).json({
+                success: false,
+                message: "Invalid credentials",
             });
-        } else {
-            return res.status(401).json({ success: false, message: "Invalid credentials" });
         }
+
+        const token = createToken(user._id);
+
+        return res.status(200).json({
+            success: true,
+            token,
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+            },
+        });
+
     } catch (error) {
         console.error("Login Error:", error);
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+        });
     }
 };
 
-/**
- * @route   POST /api/user/register
- * @desc    Register a new customer
- */
+/* =========================
+   REGISTER USER
+========================= */
 export const registerUser = async (req, res) => {
     try {
         const { name, email, password } = req.body;
 
         if (!name || !email || !password) {
-            return res.status(400).json({ success: false, message: "All fields are required" });
+            return res.status(400).json({
+                success: false,
+                message: "All fields are required",
+            });
         }
 
         const cleanEmail = email.toLowerCase().trim();
 
         if (!validator.isEmail(cleanEmail)) {
-            return res.status(400).json({ success: false, message: "Please enter a valid email" });
+            return res.status(400).json({
+                success: false,
+                message: "Invalid email format",
+            });
         }
 
         if (password.length < 8) {
-            return res.status(400).json({ success: false, message: "Password must be at least 8 characters" });
+            return res.status(400).json({
+                success: false,
+                message: "Password must be at least 8 characters",
+            });
         }
 
-        const userExists = await User.findOne({ email: cleanEmail });
-        if (userExists) {
-            return res.status(400).json({ success: false, message: "User already exists" });
+        const exists = await User.findOne({ email: cleanEmail });
+
+        if (exists) {
+            return res.status(409).json({
+                success: false,
+                message: "User already exists",
+            });
         }
 
-        // Pass the plain text password directly! The schema will handle the hashing.
         const newUser = new User({
             name,
             email: cleanEmail,
-            password 
+            password,
         });
 
         const user = await newUser.save();
+
         const token = createToken(user._id);
 
-        return res.status(201).json({ success: true, token });
+        return res.status(201).json({
+            success: true,
+            token,
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+            },
+        });
 
     } catch (error) {
-        console.error("Registration Error:", error);
-        return res.status(500).json({ success: false, message: error.message });
+        console.error("Register Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+        });
     }
 };
 
-/**
- * @route   POST /api/user/admin
- * @desc    Admin login using environment credentials
- */
+/* =========================
+   ADMIN LOGIN
+========================= */
 export const adminLogin = async (req, res) => {
     try {
         const { email, password } = req.body;
 
+        const adminEmail = process.env.ADMIN_EMAIL;
+        const adminPassword = process.env.ADMIN_PASSWORD;
+
         if (!email || !password) {
-            return res.status(400).json({ success: false, message: "Email and password are required" });
+            return res.status(400).json({
+                success: false,
+                message: "Email and password required",
+            });
         }
 
-        // 💡 FIXED: Safely verify that environment variable declarations exist before execution
-        const adminEmailEnv = process.env.ADMIN_EMAIL || "";
-        const adminPasswordEnv = process.env.ADMIN_PASSWORD || "";
-
-        // Strict matching with environment variables
         if (
-            email.trim().toLowerCase() === adminEmailEnv.trim().toLowerCase() && 
-            password === adminPasswordEnv
+            email.trim().toLowerCase() === adminEmail?.trim().toLowerCase() &&
+            password === adminPassword
         ) {
-            // 💡 FIXED: Signed with a proper JSON payload object, not a primitive string value
-            const token = jwt.sign(
-                { email: email.trim().toLowerCase(), role: "admin" }, 
-                process.env.JWT_SECRET,
-                { expiresIn: '1d' } // Explicit expiry setup
-            );
-            return res.status(200).json({ success: true, token });
-        } else {
-            return res.status(401).json({ success: false, message: "Invalid Admin Credentials" });
+            const token = createToken("admin", "admin");
+
+            return res.status(200).json({
+                success: true,
+                token,
+                role: "admin",
+            });
         }
+
+        return res.status(401).json({
+            success: false,
+            message: "Invalid admin credentials",
+        });
+
     } catch (error) {
         console.error("Admin Login Error:", error);
-        return res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+        });
     }
 };
 
-/**
- * @route   GET /api/user/profile
- * @desc    Get current user's profile data
- * @access  Private (Requires middleware)
- */
+/* =========================
+   GET USER PROFILE (FIXED)
+========================= */
 export const getUserProfile = async (req, res) => {
     try {
-        const userId = req.body.userId; 
+        // FIX: req.body.userId ❌ → req.user.id ✅
+        const userId = req.user?.id;
+
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                message: "Unauthorized - No user found in request",
+            });
+        }
+
         const user = await User.findById(userId).select("-password");
 
-        if (user) {
-            res.json({ success: true, user });
-        } else {
-            res.status(404).json({ success: false, message: "User not found" });
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: "User not found",
+            });
         }
+
+        return res.status(200).json({
+            success: true,
+            user,
+        });
+
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("Profile Error:", error);
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+        });
     }
 };
 
-/**
- * @route   POST /api/user/newsletter
- * @desc    Handle newsletter subscriptions
- */
+/* =========================
+   NEWSLETTER (OPTIONAL)
+========================= */
 export const subscribeNewsletter = async (req, res) => {
     try {
         const { email } = req.body;
 
         if (!email || !validator.isEmail(email)) {
-            return res.status(400).json({ success: false, message: "Please provide a valid email" });
+            return res.status(400).json({
+                success: false,
+                message: "Valid email required",
+            });
         }
 
-        console.log(`Newsletter signup: ${email}`);
-        res.status(200).json({ success: true, message: "Successfully subscribed!" });
+        console.log("Newsletter:", email);
+
+        return res.status(200).json({
+            success: true,
+            message: "Subscribed successfully",
+        });
+
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        return res.status(500).json({
+            success: false,
+            message: "Internal server error",
+        });
     }
 };

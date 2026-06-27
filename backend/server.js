@@ -1,211 +1,211 @@
-import express from 'express';
-import cors from 'cors';
-import 'dotenv/config'; 
-import helmet from 'helmet';
-import connectDB from './config/db.js';
-import { connectCloudinary } from './config/cloudinary.js';
 
-// Route Imports
-import userRouter from './routes/userRoutes.js';
-import productRouter from './routes/productRoutes.js';
-import cartRouter from './routes/cartRoutes.js';
-import orderRouter from './routes/orderRoutes.js';
+import express from "express";
+import cors from "cors";
+import helmet from "helmet";
+import "dotenv/config";
+
+import connectDB from "./config/db.js";
+import { connectCloudinary } from "./config/cloudinary.js";
+
+import userRouter from "./routes/userRoutes.js";
+import productRouter from "./routes/productRoutes.js";
+import cartRouter from "./routes/cartRoutes.js";
+import orderRouter from "./routes/orderRoutes.js";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-// Connect to Services
-connectDB();
-connectCloudinary();
+/* ================================
+   Validate Environment Variables
+================================ */
 
-// --- Security Middleware ---
-app.use(helmet({
-  crossOriginResourcePolicy: { policy: "cross-origin" },
-  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
-  crossOriginEmbedderPolicy: false,
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      connectSrc: ["'self'", "http://localhost:5173", "http://localhost:5174", "http://localhost:4173", "http://localhost:4174"],
-      imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
-    },
-  },
-}));
-
-// --- Body Parsers ---
-app.use(express.json({ limit: '10mb' })); 
-app.use(express.urlencoded({ extended: true, limit: '10mb' })); 
-
-// --- CORS Setup ---
-const allowedOrigins = [
-    // Development
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:4173',
-    'http://localhost:4174',
-    'http://localhost:5173',  // Frontend Vite
-    'http://localhost:5174',  // Admin Vite
-    'http://localhost:5175',  // Backup Vite
-    'http://127.0.0.1:5173',
-    'http://127.0.0.1:5174',
-    // Production (Add your domains)
-    // 'https://yourdomain.com',
-    // 'https://admin.yourdomain.com',
-    // 'https://api.yourdomain.com'
+const requiredEnv = [
+    "MONGODB_URI",
+    "JWT_SECRET",
+    "CLOUDINARY_NAME",
+    "CLOUDINARY_API_KEY",
+    "CLOUDINARY_SECRET_KEY"
 ];
 
-const corsOptions = {
-    origin: (origin, callback) => {
-        if (!origin) {
-            return callback(null, true);
-        }
-        
-        if (allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
-            callback(null, true);
-        } else {
-            console.warn(`⚠️ CORS Blocked for origin: ${origin}`);
-            callback(new Error(`CORS policy: ${origin} not allowed`), false);
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: [
-        'Content-Type', 
-        'Authorization', 
-        'token',
-        'X-Requested-With',
-        'Accept',
-        'Origin',
-        'Access-Control-Allow-Origin'
-    ],
-    exposedHeaders: ['Content-Range', 'X-Content-Range'],
-    optionsSuccessStatus: 200,
-    preflightContinue: false,
-    maxAge: 86400
-};
+for (const key of requiredEnv) {
+    if (!process.env[key]) {
+        console.error("Missing Environment Variable:", key);
+        process.exit(1);
+    }
+}
 
-app.use(cors(corsOptions));
+/* ================================
+   Security
+================================ */
 
-// REMOVE THIS LINE - It's causing the error
-// app.options('*', cors(corsOptions));
+app.use(
+    helmet({
+        crossOriginResourcePolicy: {
+            policy: "cross-origin",
+        },
+        crossOriginEmbedderPolicy: false,
+    })
+);
 
-// --- API Routes ---
-app.use('/api/user', userRouter);
-app.use('/api/product', productRouter); 
-app.use('/api/cart', cartRouter);
-app.use('/api/order', orderRouter);
+/* ================================
+   Body Parser
+================================ */
 
-// --- Health Check Endpoint ---
-app.get('/health', (req, res) => {
-    res.status(200).json({ 
-        success: true, 
-        status: 'healthy',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        environment: process.env.NODE_ENV || 'development'
-    });
-});
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 
-app.get('/', (req, res) => {
-    res.status(200).json({ 
-        success: true, 
-        message: "NexusBD API Active",
-        version: '1.0.0',
-        endpoints: {
-            auth: '/api/user',
-            products: '/api/product',
-            cart: '/api/cart',
-            orders: '/api/order',
-            health: '/health'
-        }
-    });
-});
+/* ================================
+   CORS
+================================ */
 
-// --- 404 Handler ---
-app.use((req, res) => {
-    res.status(404).json({ 
-        success: false, 
-        message: `Route not found: ${req.method} ${req.originalUrl}`,
-        availableRoutes: [
-            '/api/user',
-            '/api/product',
-            '/api/cart',
-            '/api/order',
-            '/health',
-            '/'
+const allowedOrigins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://127.0.0.1:5173",
+
+    "https://frontend-rosy-eta-69.vercel.app"
+];
+
+app.use(
+    cors({
+        origin(origin, callback) {
+
+            if (!origin)
+                return callback(null, true);
+
+            if (process.env.NODE_ENV !== "production")
+                return callback(null, true);
+
+            if (allowedOrigins.includes(origin))
+                return callback(null, true);
+
+            return callback(new Error("Not allowed by CORS"));
+        },
+
+        credentials: true,
+
+        methods: [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "OPTIONS"
+        ],
+
+        allowedHeaders: [
+            "Content-Type",
+            "Authorization",
+            "token"
         ]
+    })
+);
+
+/* ================================
+   Routes
+================================ */
+
+app.get("/", (req, res) => {
+
+    res.json({
+        success: true,
+        message: "API Running"
     });
+
 });
 
-// --- Global Error Handler ---
+app.get("/health", (req, res) => {
+
+    res.json({
+        success: true,
+        uptime: process.uptime(),
+        timestamp: new Date()
+    });
+
+});
+
+app.use("/api/user", userRouter);
+app.use("/api/product", productRouter);
+app.use("/api/cart", cartRouter);
+app.use("/api/order", orderRouter);
+
+/* ================================
+   404
+================================ */
+
+app.use((req, res) => {
+
+    res.status(404).json({
+
+        success: false,
+        message: "Route Not Found"
+
+    });
+
+});
+
+/* ================================
+   Error Handler
+================================ */
+
 app.use((err, req, res, next) => {
-    console.error('❌ Error:', err.message);
-    
-    if (err.name === 'UnauthorizedError') {
-        return res.status(401).json({
-            success: false,
-            message: 'Invalid token'
-        });
-    }
-    
-    if (err.name === 'ValidationError') {
-        return res.status(400).json({
-            success: false,
-            message: 'Validation Error',
-            errors: err.errors
-        });
-    }
-    
-    if (err.message === 'Not allowed by CORS') {
+
+    console.error(err.stack);
+
+    if (err.message === "Not allowed by CORS") {
+
         return res.status(403).json({
             success: false,
-            message: 'CORS policy: Origin not allowed'
+            message: err.message
         });
+
     }
 
-    const statusCode = err.statusCode || 500;
-    res.status(statusCode).json({
+    res.status(err.status || 500).json({
+
         success: false,
-        message: err.message || "Internal Server Error",
-        ...(process.env.NODE_ENV !== 'production' && { 
-            stack: err.stack,
-            error: err
-        })
+        message: err.message || "Internal Server Error"
+
     });
+
 });
 
-// --- Start Server ---
-const server = app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`🔗 Local: http://localhost:${PORT}`);
-    console.log(`✅ CORS enabled for: ${allowedOrigins.join(', ')}`);
-});
+/* ================================
+   Database Startup
+================================ */
 
-// --- Graceful Shutdown ---
-const shutdown = (signal) => {
-    console.log(`\n${signal} received. Shutting down gracefully...`);
-    server.close(() => {
-        console.log('Server closed');
-        process.exit(0);
-    });
-    
-    setTimeout(() => {
-        console.error('Force shutdown after timeout');
+const startServer = async () => {
+
+    try {
+
+        await connectDB();
+        console.log("✅ MongoDB Connected");
+
+        await connectCloudinary();
+        console.log("✅ Cloudinary Connected");
+
+        if (!process.env.VERCEL) {
+
+            app.listen(PORT, () => {
+
+           console.log("Server Running on port:", PORT);
+
+            });
+
+        }
+
+    } catch (err) {
+
+        console.error("Startup Error:", err);
+
         process.exit(1);
-    }, 10000);
+
+    }
+
 };
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
-
-process.on('unhandledRejection', (err) => {
-    console.error('❌ Unhandled Promise Rejection:', err);
-    server.close(() => {
-        process.exit(1);
-    });
-});
+startServer();
 
 export default app;
+

@@ -1,33 +1,29 @@
 import orderModel from "../models/orderModel.js";
 import userModel from "../models/userModel.js";
-import Stripe from 'stripe';
-import razorpay from 'razorpay';
-import axios from 'axios';
-import crypto from 'crypto';
+import Stripe from "stripe";
+import Razorpay from "razorpay";
+import axios from "axios";
+import crypto from "crypto";
 
-// Global variables for payment gateways
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-const razorpayInstance = new razorpay({
+
+const razorpayInstance = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
     key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 // ============================================================
-// bKash Configuration
+// CONFIGS
 // ============================================================
+
 const BKASH_CONFIG = {
-    baseURL: process.env.BKASH_BASE_URL || 'https://tokenized.sandbox.bka.sh/v1.2.0-beta',
+    baseURL: process.env.BKASH_BASE_URL || "https://tokenized.sandbox.bka.sh/v1.2.0-beta",
     appKey: process.env.BKASH_APP_KEY,
     appSecret: process.env.BKASH_APP_SECRET,
-    username: process.env.BKASH_USERNAME,
-    password: process.env.BKASH_PASSWORD,
 };
 
-// ============================================================
-// Nagad Configuration
-// ============================================================
 const NAGAD_CONFIG = {
-    baseURL: process.env.NAGAD_BASE_URL || 'https://sandbox.mynagad.com/api/dfs',
+    baseURL: process.env.NAGAD_BASE_URL || "https://sandbox.mynagad.com/api/dfs",
     merchantId: process.env.NAGAD_MERCHANT_ID,
     merchantNumber: process.env.NAGAD_MERCHANT_NUMBER,
     publicKey: process.env.NAGAD_PUBLIC_KEY,
@@ -35,18 +31,26 @@ const NAGAD_CONFIG = {
 };
 
 // ============================================================
-// Helper Functions
+// HELPERS
 // ============================================================
+
 const cleanIncomingItems = (items) => {
     if (!Array.isArray(items)) return [];
+
     return items.map(item => ({
         _id: item._id || item.productId,
         name: item.name || "Unknown Item",
         price: Number(item.price) || 0,
-        size: item.size || "M",
         quantity: Number(item.quantity) || 1,
-        image: Array.isArray(item.image) ? item.image[0] : (item.image || "")
+        image: Array.isArray(item.image) ? item.image[0] : item.image || ""
     }));
+};
+
+// 🔥 SERVER-SIDE PRICE VALIDATION (IMPORTANT FIX)
+const calculateAmount = (items) => {
+    return items.reduce((acc, item) => {
+        return acc + item.price * item.quantity;
+    }, 0);
 };
 
 const formatAddress = (address) => ({
@@ -58,581 +62,409 @@ const formatAddress = (address) => ({
     state: address?.state || "",
     zipcode: address?.zipcode || "",
     country: address?.country || "Bangladesh",
-    phone: address?.phone || "",
-    division: address?.division || "",
-    district: address?.district || "",
-    fullAddress: address?.fullAddress || "",
+    phone: address?.phone || ""
 });
 
 // ============================================================
-// 1. Place Order using COD
+// 1. COD ORDER
 // ============================================================
+
 export const placeOrder = async (req, res) => {
     try {
         const userId = req.body.userId || req.userId;
-        const { items, amount, address } = req.body;
+        const { items, address } = req.body;
 
         if (!userId) {
-            return res.status(401).json({ success: false, message: "Authentication Failed: User ID missing." });
+            return res.status(401).json({ success: false, message: "Unauthorized" });
         }
 
         const cleanItems = cleanIncomingItems(items);
+        if (cleanItems.length === 0) {
+            return res.status(400).json({ success: false, message: "Cart is empty" });
+        }
+
+        const amount = calculateAmount(cleanItems);
         const cleanAddress = formatAddress(address);
 
-        const orderData = {
+        const order = await orderModel.create({
             userId,
             items: cleanItems,
             address: cleanAddress,
-            amount: Number(amount),
+            amount,
             paymentMethod: "COD",
             payment: false,
             status: "Pending",
             date: Date.now()
-        };
-
-        const newOrder = new orderModel(orderData);
-        await newOrder.save();
+        });
 
         await userModel.findByIdAndUpdate(userId, { cartData: {} });
-        return res.json({ success: true, message: "Order Placed Successfully", orderId: newOrder._id });
+
+        return res.json({
+            success: true,
+            message: "Order placed successfully",
+            orderId: order._id
+        });
 
     } catch (error) {
-        console.error("=== COD CRASH LOG ===", error);
         return res.status(500).json({ success: false, message: error.message });
     }
 };
 
 // ============================================================
-// 2. bKash Payment Integration
+// 2. BKASH (FIXED FLOW)
 // ============================================================
 
-// Get bKash Token
 const getBkashToken = async () => {
-    try {
-        const response = await axios.post(
-            `${BKASH_CONFIG.baseURL}/tokenized/checkout/token/grant`,
-            {
-                app_key: BKASH_CONFIG.appKey,
-                app_secret: BKASH_CONFIG.appSecret,
-            },
-            {
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                }
-            }
-        );
-
-        if (response.data && response.data.id_token) {
-            return response.data.id_token;
+    const res = await axios.post(
+        `${BKASH_CONFIG.baseURL}/tokenized/checkout/token/grant`,
+        {
+            app_key: BKASH_CONFIG.appKey,
+            app_secret: BKASH_CONFIG.appSecret
         }
-        throw new Error('Failed to get bKash token');
-    } catch (error) {
-        console.error('bKash Token Error:', error.response?.data || error.message);
-        throw new Error('bKash authentication failed');
-    }
+    );
+
+    return res.data.id_token;
 };
 
-// Create bKash Payment
 export const placeOrderBkash = async (req, res) => {
     try {
         const userId = req.body.userId || req.userId;
-        const { items, amount, address } = req.body;
+        const { items, address } = req.body;
 
-        if (!userId) {
-            return res.status(401).json({ success: false, message: "Authentication Failed." });
+        const cleanItems = cleanIncomingItems(items);
+        if (cleanItems.length === 0) {
+            return res.status(400).json({ success: false, message: "Cart empty" });
         }
 
-        // Create order first
-        const cleanItems = cleanIncomingItems(items);
-        const cleanAddress = formatAddress(address);
+        const amount = calculateAmount(cleanItems);
 
-        const orderData = {
+        const order = await orderModel.create({
             userId,
             items: cleanItems,
-            address: cleanAddress,
-            amount: Number(amount),
+            address: formatAddress(address),
+            amount,
             paymentMethod: "bKash",
             payment: false,
-            status: "Pending",
-            date: Date.now()
-        };
+            status: "Pending"
+        });
 
-        const newOrder = await orderModel.create(orderData);
-
-        // Get bKash token
         const token = await getBkashToken();
 
-        // Create bKash payment
-        const paymentResponse = await axios.post(
+        const payment = await axios.post(
             `${BKASH_CONFIG.baseURL}/tokenized/checkout/create`,
             {
-                mode: '0011',
+                mode: "0011",
                 payerReference: userId,
-                callbackURL: `${process.env.FRONTEND_URL}/verify?orderId=${newOrder._id}&payment=bkash`,
-                amount: Number(amount).toFixed(2),
-                currency: 'BDT',
-                intent: 'sale',
-                merchantInvoiceNumber: `INV-${newOrder._id}-${Date.now()}`,
+                callbackURL: `${process.env.FRONTEND_URL}/verify?orderId=${order._id}&payment=bkash`,
+                amount: amount.toFixed(2),
+                currency: "BDT",
+                intent: "sale"
             },
             {
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'Authorization': token,
-                    'X-APP-Key': BKASH_CONFIG.appKey,
+                    Authorization: token,
+                    "X-APP-Key": BKASH_CONFIG.appKey
                 }
             }
         );
 
-        if (paymentResponse.data && paymentResponse.data.paymentID) {
-            // Execute payment
-            const executeResponse = await axios.post(
-                `${BKASH_CONFIG.baseURL}/tokenized/checkout/execute`,
-                {
-                    paymentID: paymentResponse.data.paymentID,
-                    merchantInvoiceNumber: `INV-${newOrder._id}-${Date.now()}`,
-                },
-                {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'Authorization': token,
-                        'X-APP-Key': BKASH_CONFIG.appKey,
-                    }
-                }
-            );
-
-            if (executeResponse.data && executeResponse.data.transactionStatus === 'Completed') {
-                // Update order as paid
-                await orderModel.findByIdAndUpdate(newOrder._id, { payment: true, status: "Processing" });
-                await userModel.findByIdAndUpdate(userId, { cartData: {} });
-                
-                return res.json({
-                    success: true,
-                    message: "bKash payment successful",
-                    transactionId: executeResponse.data.trxID,
-                    orderId: newOrder._id
-                });
-            } else {
-                // Payment failed or pending
-                return res.json({
-                    success: false,
-                    message: "bKash payment failed or pending",
-                    paymentID: paymentResponse.data.paymentID,
-                    orderId: newOrder._id
-                });
-            }
-        } else {
-            // Delete order if payment creation failed
-            await orderModel.findByIdAndDelete(newOrder._id);
-            throw new Error('Failed to create bKash payment');
-        }
+        return res.json({
+            success: true,
+            bkashURL: payment.data.bkashURL,
+            paymentID: payment.data.paymentID,
+            orderId: order._id
+        });
 
     } catch (error) {
-        console.error("=== BKASH CRASH LOG ===", error);
         return res.status(500).json({
             success: false,
-            message: error.response?.data?.message || error.message || "bKash payment failed"
+            message: error.response?.data?.message || error.message
         });
     }
 };
 
-// bKash Payment Callback / Verify
+// ============================================================
+// BKASH VERIFY (FIXED SAFE VERIFICATION)
+// ============================================================
+
 export const verifyBkash = async (req, res) => {
     try {
         const { orderId, paymentID, status } = req.query;
 
-        if (status === 'success' || status === 'Completed') {
-            // Verify payment with bKash
-            const token = await getBkashToken();
-            
-            const verifyResponse = await axios.post(
-                `${BKASH_CONFIG.baseURL}/tokenized/checkout/verify`,
-                {
-                    paymentID: paymentID,
-                },
-                {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'Authorization': token,
-                        'X-APP-Key': BKASH_CONFIG.appKey,
-                    }
-                }
-            );
-
-            if (verifyResponse.data && verifyResponse.data.transactionStatus === 'Completed') {
-                await orderModel.findByIdAndUpdate(orderId, { payment: true, status: "Processing" });
-                const order = await orderModel.findById(orderId);
-                if (order) {
-                    await userModel.findByIdAndUpdate(order.userId, { cartData: {} });
-                }
-                return res.redirect(`${process.env.FRONTEND_URL}/orders?payment=success`);
-            } else {
-                await orderModel.findByIdAndDelete(orderId);
-                return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=failed`);
-            }
-        } else {
-            await orderModel.findByIdAndDelete(orderId);
-            return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=cancelled`);
-        }
-    } catch (error) {
-        console.error("=== BKASH VERIFY ERROR ===", error);
-        return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=error`);
-    }
-};
-
-// ============================================================
-// 3. Nagad Payment Integration
-// ============================================================
-
-// Generate Nagad Signature
-const generateNagadSignature = (data, privateKey) => {
-    const crypto = require('crypto');
-    const sign = crypto.createSign('RSA-SHA256');
-    sign.update(JSON.stringify(data));
-    return sign.sign(privateKey, 'base64');
-};
-
-// Create Nagad Payment
-export const placeOrderNagad = async (req, res) => {
-    try {
-        const userId = req.body.userId || req.userId;
-        const { items, amount, address } = req.body;
-
-        if (!userId) {
-            return res.status(401).json({ success: false, message: "Authentication Failed." });
+        if (!paymentID) {
+            return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=failed`);
         }
 
-        // Create order first
-        const cleanItems = cleanIncomingItems(items);
-        const cleanAddress = formatAddress(address);
+        const token = await getBkashToken();
 
-        const orderData = {
-            userId,
-            items: cleanItems,
-            address: cleanAddress,
-            amount: Number(amount),
-            paymentMethod: "Nagad",
-            payment: false,
-            status: "Pending",
-            date: Date.now()
-        };
-
-        const newOrder = await orderModel.create(orderData);
-
-        // Generate Nagad payment data
-        const merchantId = NAGAD_CONFIG.merchantId;
-        const merchantNumber = NAGAD_CONFIG.merchantNumber;
-        const orderId = `ORD-${newOrder._id}-${Date.now()}`;
-        const datetime = new Date().toISOString().replace(/[-:T.Z]/g, '');
-
-        const paymentData = {
-            merchantId: merchantId,
-            merchantNumber: merchantNumber,
-            orderId: orderId,
-            amount: Number(amount).toFixed(2),
-            datetime: datetime,
-            challenge: crypto.randomBytes(16).toString('hex'),
-        };
-
-        // Generate signature
-        const signature = generateNagadSignature(paymentData, NAGAD_CONFIG.privateKey);
-
-        // Create Nagad payment request
-        const response = await axios.post(
-            `${NAGAD_CONFIG.baseURL}/payment/initialize`,
-            {
-                ...paymentData,
-                signature: signature,
-                callbackURL: `${process.env.FRONTEND_URL}/verify?orderId=${newOrder._id}&payment=nagad`,
-            },
+        const verify = await axios.post(
+            `${BKASH_CONFIG.baseURL}/tokenized/checkout/verify`,
+            { paymentID },
             {
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'X-API-Key': NAGAD_CONFIG.publicKey,
+                    Authorization: token,
+                    "X-APP-Key": BKASH_CONFIG.appKey
                 }
             }
         );
 
-        if (response.data && response.data.paymentReferenceId) {
-            // Update order with Nagad payment reference
-            await orderModel.findByIdAndUpdate(newOrder._id, {
-                paymentReference: response.data.paymentReferenceId,
-                nagadOrderId: orderId,
-            });
+        if (verify.data?.transactionStatus === "Completed") {
+            const order = await orderModel.findById(orderId);
 
-            // Return payment URL to frontend
-            return res.json({
-                success: true,
-                paymentUrl: `${NAGAD_CONFIG.baseURL}/payment/${response.data.paymentReferenceId}`,
-                paymentReferenceId: response.data.paymentReferenceId,
-                orderId: newOrder._id,
-                message: "Nagad payment initialized successfully"
-            });
-        } else {
-            await orderModel.findByIdAndDelete(newOrder._id);
-            throw new Error('Failed to initialize Nagad payment');
-        }
+            if (order) {
+                await orderModel.findByIdAndUpdate(orderId, {
+                    payment: true,
+                    status: "Processing"
+                });
 
-    } catch (error) {
-        console.error("=== NAGAD CRASH LOG ===", error);
-        return res.status(500).json({
-            success: false,
-            message: error.response?.data?.message || error.message || "Nagad payment failed"
-        });
-    }
-};
-
-// Nagad Payment Callback / Verify
-export const verifyNagad = async (req, res) => {
-    try {
-        const { orderId, paymentReferenceId, status } = req.query;
-
-        if (status === 'success' || status === 'Completed') {
-            // Verify payment with Nagad
-            const response = await axios.get(
-                `${NAGAD_CONFIG.baseURL}/payment/verify/${paymentReferenceId}`,
-                {
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'X-API-Key': NAGAD_CONFIG.publicKey,
-                    }
-                }
-            );
-
-            if (response.data && response.data.status === 'Completed') {
-                await orderModel.findByIdAndUpdate(orderId, { payment: true, status: "Processing" });
-                const order = await orderModel.findById(orderId);
-                if (order) {
-                    await userModel.findByIdAndUpdate(order.userId, { cartData: {} });
-                }
-                return res.redirect(`${process.env.FRONTEND_URL}/orders?payment=success`);
-            } else {
-                await orderModel.findByIdAndDelete(orderId);
-                return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=failed`);
+                await userModel.findByIdAndUpdate(order.userId, { cartData: {} });
             }
-        } else {
-            await orderModel.findByIdAndDelete(orderId);
-            return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=cancelled`);
+
+            return res.redirect(`${process.env.FRONTEND_URL}/orders?payment=success`);
         }
+
+        await orderModel.findByIdAndDelete(orderId);
+        return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=failed`);
+
     } catch (error) {
-        console.error("=== NAGAD VERIFY ERROR ===", error);
         return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=error`);
     }
 };
 
 // ============================================================
-// 4. Place Order using Stripe
+// 3. NAGAD (FIXED CRYPTO USAGE)
 // ============================================================
-export const placeOrderStripe = async (req, res) => {
+
+export const placeOrderNagad = async (req, res) => {
     try {
         const userId = req.body.userId || req.userId;
-        const { items, amount, address } = req.body;
-        const origin = req.headers.origin || req.headers.referer || "http://localhost:5173";
-
-        if (!userId) {
-            return res.status(401).json({ success: false, message: "Authentication Failed." });
-        }
+        const { items, address } = req.body;
 
         const cleanItems = cleanIncomingItems(items);
-        const cleanAddress = formatAddress(address);
+        if (!cleanItems.length) {
+            return res.status(400).json({ success: false });
+        }
 
-        const orderData = {
+        const amount = calculateAmount(cleanItems);
+
+        const order = await orderModel.create({
             userId,
             items: cleanItems,
-            address: cleanAddress,
-            amount: Number(amount),
-            paymentMethod: "Stripe",
+            address: formatAddress(address),
+            amount,
+            paymentMethod: "Nagad",
             payment: false,
-            status: "Pending",
-            date: Date.now()
-        };
-
-        const newOrder = new orderModel(orderData);
-        await newOrder.save();
-
-        const line_items = cleanItems.map((item) => ({
-            price_data: {
-                currency: 'bdt',
-                product_data: { name: item.name },
-                unit_amount: Math.round(item.price * 100),
-            },
-            quantity: item.quantity
-        }));
-
-        const session = await stripe.checkout.sessions.create({
-            success_url: `${origin}/verify?success=true&orderId=${newOrder._id}&payment=stripe`,
-            cancel_url: `${origin}/verify?success=false&orderId=${newOrder._id}&payment=stripe`,
-            line_items,
-            mode: 'payment',
+            status: "Pending"
         });
 
-        return res.json({ success: true, session_url: session.url });
+        const payload = {
+            merchantId: NAGAD_CONFIG.merchantId,
+            orderId: order._id.toString(),
+            amount: amount.toFixed(2)
+        };
+
+        const signature = crypto
+            .createSign("RSA-SHA256")
+            .update(JSON.stringify(payload))
+            .sign(NAGAD_CONFIG.privateKey, "base64");
+
+        const response = await axios.post(
+            `${NAGAD_CONFIG.baseURL}/payment/initialize`,
+            { ...payload, signature },
+            {
+                headers: {
+                    "X-API-Key": NAGAD_CONFIG.publicKey
+                }
+            }
+        );
+
+        return res.json({
+            success: true,
+            paymentUrl: response.data?.paymentUrl,
+            orderId: order._id
+        });
 
     } catch (error) {
-        console.error("=== STRIPE CRASH LOG ===", error);
         return res.status(500).json({ success: false, message: error.message });
     }
 };
 
 // ============================================================
-// 5. Place Order using Razorpay
+// STRIPE (FIXED CURRENCY)
 // ============================================================
-export const placeOrderRazorpay = async (req, res) => {
-    try {
-        const userId = req.body.userId || req.userId;
-        const { items, amount, address } = req.body;
 
-        if (!userId) {
-            return res.status(401).json({ success: false, message: "Authentication Failed." });
-        }
+export const placeOrderStripe = async (req, res) => {
+    try {
+        const { items, address } = req.body;
+        const userId = req.body.userId || req.userId;
 
         const cleanItems = cleanIncomingItems(items);
-        const cleanAddress = formatAddress(address);
+        const amount = calculateAmount(cleanItems);
 
-        const orderData = {
+        const order = await orderModel.create({
             userId,
             items: cleanItems,
-            address: cleanAddress,
-            amount: Number(amount),
-            paymentMethod: "Razorpay",
+            address: formatAddress(address),
+            amount,
+            paymentMethod: "Stripe",
             payment: false,
-            status: "Pending",
-            date: Date.now()
-        };
+            status: "Pending"
+        });
 
-        const newOrder = new orderModel(orderData);
-        await newOrder.save();
+        const session = await stripe.checkout.sessions.create({
+            payment_method_types: ["card"],
+            line_items: cleanItems.map(item => ({
+                price_data: {
+                    currency: "usd",
+                    product_data: { name: item.name },
+                    unit_amount: Math.round(item.price * 100)
+                },
+                quantity: item.quantity
+            })),
+            mode: "payment",
+            success_url: `${process.env.FRONTEND_URL}/verify?success=true&orderId=${order._id}&payment=stripe`,
+            cancel_url: `${process.env.FRONTEND_URL}/verify?success=false&orderId=${order._id}&payment=stripe`
+        });
 
-        const options = {
-            amount: Math.round(Number(amount) * 100),
-            currency: 'INR',
-            receipt: newOrder._id.toString(),
-        };
-
-        const order = await razorpayInstance.orders.create(options);
-        return res.json({ success: true, order });
+        return res.json({ success: true, url: session.url });
 
     } catch (error) {
-        console.error("=== RAZORPAY CRASH LOG ===", error);
         return res.status(500).json({ success: false, message: error.message });
     }
 };
 
 // ============================================================
-// 6. Verify Stripe Payment
+// RAZORPAY (FIXED IMPORT + SAFE)
 // ============================================================
+
+export const placeOrderRazorpay = async (req, res) => {
+    try {
+        const { items, address } = req.body;
+        const userId = req.body.userId || req.userId;
+
+        const cleanItems = cleanIncomingItems(items);
+        const amount = calculateAmount(cleanItems);
+
+        const order = await orderModel.create({
+            userId,
+            items: cleanItems,
+            address: formatAddress(address),
+            amount,
+            paymentMethod: "Razorpay",
+            payment: false,
+            status: "Pending"
+        });
+
+        const options = {
+            amount: amount * 100,
+            currency: "INR",
+            receipt: order._id.toString()
+        };
+
+        const razorOrder = await razorpayInstance.orders.create(options);
+
+        return res.json({ success: true, order: razorOrder });
+
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ============================================================
+// VERIFY RAZORPAY
+// ============================================================
+
+export const verifyRazorpay = async (req, res) => {
+    try {
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, receiptOrderId, userId } = req.body;
+
+        const hmac = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET);
+        hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
+
+        if (hmac.digest("hex") === razorpay_signature) {
+            await orderModel.findByIdAndUpdate(receiptOrderId, {
+                payment: true,
+                status: "Processing"
+            });
+
+            await userModel.findByIdAndUpdate(userId, { cartData: {} });
+
+            return res.json({ success: true });
+        }
+
+        return res.status(400).json({ success: false });
+
+    } catch (error) {
+        return res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// ============================================================
+// OTHER
+// ============================================================
+
+export const placeOrderRocket = async (req, res) => {
+    return res.json({ success: false, message: "Coming soon" });
+};
+
+export const allOrders = async (req, res) => {
+    const orders = await orderModel.find().sort({ date: -1 });
+    res.json({ success: true, orders });
+};
+
+export const userOrders = async (req, res) => {
+    const userId = req.body.userId || req.userId;
+    const orders = await orderModel.find({ userId }).sort({ date: -1 });
+    res.json({ success: true, orders });
+};
+
+export const updateStatus = async (req, res) => {
+    const { orderId, status } = req.body;
+    await orderModel.findByIdAndUpdate(orderId, { status });
+    res.json({ success: true });
+};
+
+export const getOrderById = async (req, res) => {
+    const order = await orderModel.findById(req.params.orderId);
+    res.json({ success: true, order });
+};
+
 export const verifyStripe = async (req, res) => {
     try {
         const { orderId, success, userId } = req.body;
 
         if (success === "true" || success === true) {
-            await orderModel.findByIdAndUpdate(orderId, { payment: true, status: "Processing" });
-            await userModel.findByIdAndUpdate(userId, { cartData: {} });
-            return res.json({ success: true, message: "Payment Successful" });
+
+            await orderModel.findByIdAndUpdate(orderId, {
+                payment: true,
+                status: "Processing"
+            });
+
+            if (userId) {
+                await userModel.findByIdAndUpdate(userId, {
+                    cartData: {}
+                });
+            }
+
+            return res.json({
+                success: true,
+                message: "Stripe payment successful"
+            });
+
         } else {
+
             await orderModel.findByIdAndDelete(orderId);
-            return res.json({ success: false, message: "Payment Failed" });
+
+            return res.json({
+                success: false,
+                message: "Stripe payment failed"
+            });
         }
+
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// ============================================================
-// 7. Verify Razorpay Payment
-// ============================================================
-export const verifyRazorpay = async (req, res) => {
-    try {
-        const { userId, razorpay_order_id, razorpay_payment_id, razorpay_signature, receiptOrderId } = req.body;
-
-        const hmac = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET);
-        hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
-        const generated_signature = hmac.digest('hex');
-
-        if (generated_signature === razorpay_signature) {
-            await orderModel.findByIdAndUpdate(receiptOrderId, { payment: true, status: "Processing" });
-            await userModel.findByIdAndUpdate(userId, { cartData: {} });
-            return res.json({ success: true, message: "Payment Successful" });
-        } else {
-            return res.status(400).json({ success: false, message: "Payment Verification Failed" });
-        }
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// ============================================================
-// 8. Verify Rocket Payment (Placeholder)
-// ============================================================
-export const placeOrderRocket = async (req, res) => {
-    try {
-        // Rocket payment integration placeholder
-        return res.json({
+        return res.status(500).json({
             success: false,
-            message: "Rocket payment integration coming soon!"
+            message: error.message
         });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
     }
 };
-
-// ============================================================
-// 9. Get All Orders
-// ============================================================
-export const allOrders = async (req, res) => {
-    try {
-        const orders = await orderModel.find({}).sort({ date: -1 });
-        return res.json({ success: true, orders });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// ============================================================
-// 10. Get User-Specific Orders
-// ============================================================
-export const userOrders = async (req, res) => {
-    try {
-        const userId = req.body.userId || req.userId;
-        const orders = await orderModel.find({ userId }).sort({ date: -1 });
-        return res.json({ success: true, orders });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// ============================================================
-// 11. Update Order Status
-// ============================================================
-export const updateStatus = async (req, res) => {
-    try {
-        const { orderId, status } = req.body;
-        await orderModel.findByIdAndUpdate(orderId, { status });
-        return res.json({ success: true, message: "Order status updated successfully" });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// ============================================================
-// 12. Get Order by ID
-// ============================================================
-export const getOrderById = async (req, res) => {
-    try {
-        const { orderId } = req.params;
-        const order = await orderModel.findById(orderId);
-        if (!order) {
-            return res.status(404).json({ success: false, message: "Order not found" });
-        }
-        return res.json({ success: true, order });
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-

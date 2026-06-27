@@ -1,8 +1,10 @@
 // src/services/productService.js
 import axios from 'axios';
 
-// Use environment variable with fallback to production URL
-const API_URL = import.meta.env.VITE_API_URL || 'https://backend-five-sigma-91.vercel.app/api/product';
+// ✅ FIXED: Use the correct API URL structure
+// Your backend is on Vercel at: https://backend-five-sigma-91.vercel.app
+// The routes show: /api/product, /api/cart, /api/order, etc.
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://backend-five-sigma-91.vercel.app/api';
 
 export const createProduct = async (productData, token) => {
   const config = {
@@ -11,18 +13,18 @@ export const createProduct = async (productData, token) => {
     },
   };
 
-  const response = await axios.post(`${API_URL}/add`, productData, config);
+  const response = await axios.post(`${API_BASE_URL}/product/add`, productData, config);
   return response.data;
 };
 
-// Add other product operations
 export const getProducts = async () => {
-  const response = await axios.get(API_URL);
+  // ✅ FIXED: Use /product not /api/product (since API_BASE_URL already includes /api)
+  const response = await axios.get(`${API_BASE_URL}/product`);
   return response.data;
 };
 
 export const getProduct = async (id) => {
-  const response = await axios.get(`${API_URL}/${id}`);
+  const response = await axios.get(`${API_BASE_URL}/product/${id}`);
   return response.data;
 };
 
@@ -32,7 +34,7 @@ export const updateProduct = async (id, productData, token) => {
       Authorization: `Bearer ${token}`,
     },
   };
-  const response = await axios.put(`${API_URL}/${id}`, productData, config);
+  const response = await axios.put(`${API_BASE_URL}/product/${id}`, productData, config);
   return response.data;
 };
 
@@ -42,6 +44,19 @@ export const deleteProduct = async (id, token) => {
       Authorization: `Bearer ${token}`,
     },
   };
-  const response = await axios.delete(`${API_URL}/${id}`, config);
+  const response = await axios.delete(`${API_BASE_URL}/product/${id}`, config);
   return response.data;
+};
+
+// ✅ Add debug function to test API connection
+export const testAPI = async () => {
+  try {
+    console.log('Testing API connection to:', API_BASE_URL);
+    const response = await axios.get(`${API_BASE_URL}/product`);
+    console.log('API Response:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('API Test Failed:', error.response?.data || error.message);
+    return null;
+  }
 };

@@ -15,6 +15,7 @@ import { ToastContainer } from "react-toastify"
 import Wishlist from "./pages/Wishlist"
 import PrivacyPolicy from "./pages/PrivacyPolicy"
 import TermsConditions from "./pages/TermsConditions"
+// import Register from './components/Register';
 
 export const App = () =>{
 
@@ -38,6 +39,7 @@ export const App = () =>{
         <Route path="wishlist" element={<Wishlist/>}/>
         <Route path="privacy" element={<PrivacyPolicy/>}/>
         <Route path="terms" element={<TermsConditions/>}/>
+        {/* <Route path="/register" element={<Register redirectTo="/" />} /> */}
        </Routes>
        <Footer/>
     </div>

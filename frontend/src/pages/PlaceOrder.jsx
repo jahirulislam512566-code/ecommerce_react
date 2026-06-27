@@ -7,7 +7,7 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
 // ============================================================
-// Constants - Bangladesh Specific
+// Constants & Configuration
 // ============================================================
 const PAYMENT_METHODS = {
   COD: 'cod',
@@ -65,8 +65,57 @@ const INITIAL_FORM_STATE = {
   deliveryNote: '',
 };
 
+const VALIDATION_RULES = {
+  phone: {
+    regex: /^01[3-9]\d{8}$/,
+    message: 'Please enter a valid Bangladesh phone number (e.g., 01XXXXXXXXX)'
+  },
+  email: {
+    regex: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+    message: 'Please enter a valid email'
+  }
+};
+
 // ============================================================
-// FormInput Component
+// Custom Hooks
+// ============================================================
+const useFormValidation = (formData) => {
+  return useMemo(() => {
+    const errors = {};
+    const required = ['firstName', 'lastName', 'email', 'phone', 'street', 'division', 'district', 'city', 'zipcode'];
+    
+    required.forEach(field => {
+      if (!formData[field]?.trim()) {
+        errors[field] = `${field.charAt(0).toUpperCase() + field.slice(1)} is required`;
+      }
+    });
+
+    if (formData.email && !VALIDATION_RULES.email.regex.test(formData.email)) {
+      errors.email = VALIDATION_RULES.email.message;
+    }
+    
+    if (formData.phone && !VALIDATION_RULES.phone.regex.test(formData.phone)) {
+      errors.phone = VALIDATION_RULES.phone.message;
+    }
+
+    return {
+      errors,
+      isValid: Object.keys(errors).length === 0
+    };
+  }, [formData]);
+};
+
+const useDeliveryCharge = (division) => {
+  return useMemo(() => {
+    if (!division) return DELIVERY_CHARGES['Dhaka'];
+    if (division === 'Dhaka') return DELIVERY_CHARGES['Dhaka'];
+    if (division === 'Chattogram') return DELIVERY_CHARGES['Chattogram City'];
+    return DELIVERY_CHARGES['Outside Dhaka'];
+  }, [division]);
+};
+
+// ============================================================
+// Reusable Components
 // ============================================================
 const FormInput = ({ 
   label, 
@@ -81,20 +130,23 @@ const FormInput = ({
   error,
   ...props 
 }) => {
+  const inputId = `input-${name}`;
+  
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-xs font-medium text-gray-600 mb-1">
-          {label} {required && <span className="text-red-500">*</span>}
+        <label htmlFor={inputId} className="block text-xs font-medium text-gray-600 mb-1">
+          {label} {required && <span className="text-red-500" aria-hidden="true">*</span>}
         </label>
       )}
       <div className="relative">
         {icon && (
-          <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
+          <span className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" aria-hidden="true">
             {icon}
           </span>
         )}
         <input
+          id={inputId}
           type={type}
           name={name}
           value={value}
@@ -102,17 +154,20 @@ const FormInput = ({
           required={required}
           placeholder={placeholder || label}
           className={`w-full py-2.5 px-3.5 border ${error ? 'border-red-500' : 'border-gray-300'} rounded-lg outline-none focus:border-black focus:ring-1 focus:ring-black transition-all ${icon ? 'pl-10' : ''} ${className}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${name}-error` : undefined}
           {...props}
         />
       </div>
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+      {error && (
+        <p id={`${name}-error`} className="mt-1 text-xs text-red-500" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 };
 
-// ============================================================
-// FormSelect Component
-// ============================================================
 const FormSelect = ({ 
   label, 
   name, 
@@ -125,20 +180,25 @@ const FormSelect = ({
   error,
   disabled = false,
 }) => {
+  const selectId = `select-${name}`;
+  
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-xs font-medium text-gray-600 mb-1">
-          {label} {required && <span className="text-red-500">*</span>}
+        <label htmlFor={selectId} className="block text-xs font-medium text-gray-600 mb-1">
+          {label} {required && <span className="text-red-500" aria-hidden="true">*</span>}
         </label>
       )}
       <select
+        id={selectId}
         name={name}
         value={value}
         onChange={onChange}
         required={required}
         disabled={disabled}
         className={`w-full py-2.5 px-3.5 border ${error ? 'border-red-500' : 'border-gray-300'} rounded-lg outline-none focus:border-black focus:ring-1 focus:ring-black transition-all appearance-none bg-white ${disabled ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}
+        aria-invalid={!!error}
+        aria-describedby={error ? `${name}-error` : undefined}
       >
         <option value="">{placeholder}</option>
         {options.map((option) => (
@@ -147,14 +207,15 @@ const FormSelect = ({
           </option>
         ))}
       </select>
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+      {error && (
+        <p id={`${name}-error`} className="mt-1 text-xs text-red-500" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 };
 
-// ============================================================
-// PaymentMethod Component
-// ============================================================
 const PaymentMethod = ({ 
   method, 
   selected, 
@@ -177,6 +238,7 @@ const PaymentMethod = ({
       role="button"
       tabIndex={disabled ? -1 : 0}
       aria-label={`Select ${label} payment method`}
+      aria-pressed={selected}
       onKeyDown={(e) => !disabled && e.key === 'Enter' && onClick()}
     >
       {recommended && (
@@ -184,7 +246,7 @@ const PaymentMethod = ({
           POPULAR
         </span>
       )}
-      <div className="flex-shrink-0">
+      <div className="flex-shrink-0" aria-hidden="true">
         <div className={`
           w-4 h-4 border-2 rounded-full flex items-center justify-center
           ${selected ? 'border-black' : 'border-gray-300'}
@@ -193,7 +255,7 @@ const PaymentMethod = ({
         </div>
       </div>
       {icon && (
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0" aria-hidden="true">
           <img className="h-6 object-contain" src={icon} alt={label} />
         </div>
       )}
@@ -206,12 +268,53 @@ const PaymentMethod = ({
         )}
       </div>
       {selected && (
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0" aria-hidden="true">
           <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7" />
           </svg>
         </div>
       )}
+    </div>
+  );
+};
+
+const OrderSummary = ({ subtotal, deliveryCharge, discount, totalAmount, currency, itemsCount, division }) => {
+  return (
+    <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
+      <h3 className="font-semibold text-gray-800 text-sm mb-3">Order Summary</h3>
+      <div className="space-y-2 text-sm">
+        <div className="flex justify-between">
+          <span className="text-gray-600">Items ({itemsCount})</span>
+          <span className="font-medium">{currency}{subtotal.toFixed(2)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-gray-600">Delivery Charge</span>
+          <span className="font-medium">
+            {subtotal > 0 ? `${currency}${deliveryCharge.toFixed(2)}` : 'Free'}
+          </span>
+        </div>
+        {discount > 0 && (
+          <div className="flex justify-between text-green-600">
+            <span>Discount ({discount}%)</span>
+            <span>-{currency}{(subtotal * discount / 100).toFixed(2)}</span>
+          </div>
+        )}
+        <hr className="my-2 border-gray-200" />
+        <div className="flex justify-between font-semibold text-base">
+          <span>Total</span>
+          <span>{currency}{totalAmount.toFixed(2)}</span>
+        </div>
+        {division && (
+          <p className="text-xs text-gray-400 mt-1">
+            Delivery to: {division}
+          </p>
+        )}
+        {subtotal > 500 && (
+          <p className="text-xs text-green-600 mt-1">
+            ✨ Free delivery on orders over ৳500
+          </p>
+        )}
+      </div>
     </div>
   );
 };
@@ -241,205 +344,109 @@ export const PlaceOrder = ({
   const [method, setMethod] = useState(PAYMENT_METHODS.COD);
   const [isLoading, setIsLoading] = useState(false);
   const [formData, setFormData] = useState(INITIAL_FORM_STATE);
-  const [formErrors, setFormErrors] = useState({});
   const [discount, setDiscount] = useState(0);
-  const [deliveryCharge, setDeliveryCharge] = useState(DELIVERY_CHARGES['Dhaka']);
   const [isCodAvailable, setIsCodAvailable] = useState(true);
 
-  // --- Memoized Values ---
+  // --- Derived State ---
   const subtotal = useMemo(() => getCartSubtotal() || 0, [getCartSubtotal]);
+  const deliveryCharge = useDeliveryCharge(formData.division);
   const totalAmount = useMemo(() => {
     const amount = subtotal + (subtotal > 0 ? deliveryCharge : 0);
     return amount - (amount * (discount / 100));
   }, [subtotal, deliveryCharge, discount]);
 
   const orderItems = useMemo(() => {
-    const items = [];
-    if (!cartItems || !products) return items;
+    if (!cartItems || !products) return [];
     
-    for (const productId in cartItems) {
-      for (const size in cartItems[productId]) {
-        if (cartItems[productId][size] > 0) {
+    return Object.entries(cartItems).reduce((items, [productId, sizes]) => {
+      Object.entries(sizes).forEach(([size, quantity]) => {
+        if (quantity > 0) {
           const itemInfo = products.find((product) => product._id === productId);
           if (itemInfo) {
             items.push({
               ...itemInfo,
-              size: size,
-              quantity: cartItems[productId][size]
+              size,
+              quantity
             });
           }
         }
-      }
-    }
-    return items;
+      });
+      return items;
+    }, []);
   }, [cartItems, products]);
 
-  const isFormValid = useMemo(() => {
-    const required = ['firstName', 'lastName', 'email', 'phone', 'street', 'division', 'district', 'city', 'zipcode'];
-    return required.every(field => formData[field]?.trim());
-  }, [formData]);
+  const { errors: formErrors, isValid: isFormValid } = useFormValidation(formData);
 
   // --- Handlers ---
   const onChangeHandler = useCallback((e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
     
+    // Reset district when division changes
     if (name === 'division') {
-      let charge = DELIVERY_CHARGES['Outside Dhaka'];
-      if (value === 'Dhaka') {
-        charge = DELIVERY_CHARGES['Dhaka'];
-      } else if (value === 'Chattogram') {
-        charge = DELIVERY_CHARGES['Chattogram City'];
-      }
-      setDeliveryCharge(charge);
       setFormData(prev => ({ ...prev, district: '' }));
     }
-    
-    if (formErrors[name]) {
-      setFormErrors(prev => ({ ...prev, [name]: '' }));
-    }
-  }, [formErrors]);
+  }, []);
 
-  const validateForm = useCallback(() => {
-    const errors = {};
-    const phoneRegex = /^01[3-9]\d{8}$/;
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-    if (!formData.firstName?.trim()) errors.firstName = 'First name is required';
-    if (!formData.lastName?.trim()) errors.lastName = 'Last name is required';
-    if (!formData.email?.trim()) {
-      errors.email = 'Email is required';
-    } else if (!emailRegex.test(formData.email)) {
-      errors.email = 'Please enter a valid email';
-    }
-    if (!formData.phone?.trim()) {
-      errors.phone = 'Phone number is required';
-    } else if (!phoneRegex.test(formData.phone)) {
-      errors.phone = 'Please enter a valid Bangladesh phone number (e.g., 01XXXXXXXXX)';
-    }
-    if (!formData.street?.trim()) errors.street = 'Street address is required';
-    if (!formData.division) errors.division = 'Division is required';
-    if (!formData.district) errors.district = 'District is required';
-    if (!formData.city) errors.city = 'City/Upazila is required';
-    if (!formData.zipcode?.trim()) errors.zipcode = 'Zip code is required';
-
-    setFormErrors(errors);
-    return Object.keys(errors).length === 0;
-  }, [formData]);
-
-  // --- Payment Handlers with Fallbacks ---
-  const handleCOD = useCallback(async (orderData) => {
-    try {
-      // Try the actual endpoint
-      const response = await axios.post(
-        `${backendUrl}/api/order/place`,
-        orderData,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      
-      if (response.data.success) {
-        setCartItems({});
-        toast.success('Order placed successfully! You will pay on delivery.');
-        navigate('/orders');
-        return true;
-      } else {
-        throw new Error(response.data.message || 'Failed to place order');
+  // --- Payment Handlers with better error handling ---
+  const handlePayment = useCallback(async (orderData, paymentMethod) => {
+    const paymentConfigs = {
+      [PAYMENT_METHODS.COD]: {
+        endpoint: '/api/order/place',
+        successMessage: 'Order placed successfully! You will pay on delivery.'
+      },
+      [PAYMENT_METHODS.BKASH]: {
+        endpoint: '/api/order/bkash',
+        successMessage: 'Redirecting to bKash...'
+      },
+      [PAYMENT_METHODS.NAGAD]: {
+        endpoint: '/api/order/nagad',
+        successMessage: 'Redirecting to Nagad...'
       }
-    } catch (error) {
-      console.error('COD Error:', error);
-      
-      // Fallback for development - simulate success
+    };
+
+    const config = paymentConfigs[paymentMethod];
+    if (!config) {
+      throw new Error('Payment method not supported');
+    }
+
+    try {
+      // Check backend health first
+      await axios.get(`${backendUrl}/api/health`, { timeout: 3000 });
+    } catch (healthError) {
       if (process.env.NODE_ENV === 'development') {
-        toast.info('Development Mode: Order simulated successfully');
+        toast.warning('Backend not available. Running in development mode.');
+        // Simulate successful order
         setCartItems({});
+        toast.success('Order placed successfully! (Development Mode)');
         navigate('/orders');
         return true;
       }
-      throw error;
+      throw new Error('Payment service unavailable. Please try again later.');
     }
-  }, [backendUrl, token, setCartItems, navigate]);
 
-  const handleBkash = useCallback(async (orderData) => {
-    try {
-      const response = await axios.post(
-        `${backendUrl}/api/order/bkash`,
-        orderData,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      
-      if (response.data.success) {
-        const { paymentUrl } = response.data;
-        if (paymentUrl) {
-          window.location.href = paymentUrl;
-          return true;
-        } else {
-          throw new Error('Payment URL not received');
-        }
-      } else {
-        throw new Error(response.data.message || 'Failed to initialize bKash payment');
-      }
-    } catch (error) {
-      console.error('bKash Error:', error);
-      
-      // Fallback for development
-      if (process.env.NODE_ENV === 'development') {
-        toast.info('Development Mode: bKash payment simulated');
-        // Simulate successful payment
-        const codResponse = await axios.post(
-          `${backendUrl}/api/order/place`,
-          orderData,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        if (codResponse.data.success) {
-          setCartItems({});
-          toast.success('Order placed successfully! (bKash simulated)');
-          navigate('/orders');
-          return true;
-        }
-      }
-      throw error;
-    }
-  }, [backendUrl, token, setCartItems, navigate]);
+    const response = await axios.post(
+      `${backendUrl}${config.endpoint}`,
+      orderData,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
 
-  const handleNagad = useCallback(async (orderData) => {
-    try {
-      const response = await axios.post(
-        `${backendUrl}/api/order/nagad`,
-        orderData,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      
-      if (response.data.success) {
-        const { paymentUrl } = response.data;
-        if (paymentUrl) {
-          window.location.href = paymentUrl;
-          return true;
-        } else {
-          throw new Error('Payment URL not received');
-        }
-      } else {
-        throw new Error(response.data.message || 'Failed to initialize Nagad payment');
-      }
-    } catch (error) {
-      console.error('Nagad Error:', error);
-      
-      // Fallback for development
-      if (process.env.NODE_ENV === 'development') {
-        toast.info('Development Mode: Nagad payment simulated');
-        const codResponse = await axios.post(
-          `${backendUrl}/api/order/place`,
-          orderData,
-          { headers: { Authorization: `Bearer ${token}` } }
-        );
-        if (codResponse.data.success) {
-          setCartItems({});
-          toast.success('Order placed successfully! (Nagad simulated)');
-          navigate('/orders');
-          return true;
-        }
-      }
-      throw error;
+    if (!response.data.success) {
+      throw new Error(response.data.message || 'Payment failed');
     }
+
+    // Handle payment URL redirects
+    if (response.data.paymentUrl) {
+      window.location.href = response.data.paymentUrl;
+      return true;
+    }
+
+    // For COD and other non-redirect payments
+    setCartItems({});
+    toast.success(config.successMessage);
+    navigate('/orders');
+    return true;
+
   }, [backendUrl, token, setCartItems, navigate]);
 
   // --- Main Submit Handler ---
@@ -457,7 +464,7 @@ export const PlaceOrder = ({
       return;
     }
 
-    if (!validateForm()) {
+    if (!isFormValid) {
       toast.error('Please fill in all required fields correctly');
       return;
     }
@@ -467,25 +474,21 @@ export const PlaceOrder = ({
       return;
     }
 
-    try {
-      setIsLoading(true);
+    // Check COD availability
+    if (method === PAYMENT_METHODS.COD && totalAmount > 50000) {
+      toast.error('COD is not available for orders over ৳50,000');
+      return;
+    }
 
+    setIsLoading(true);
+
+    try {
       const formattedAddress = `${formData.street}, ${formData.city}, ${formData.district}, ${formData.division} - ${formData.zipcode}`;
 
       const orderData = {
         address: {
-          firstName: formData.firstName,
-          lastName: formData.lastName,
-          email: formData.email,
-          phone: formData.phone,
-          street: formData.street,
-          city: formData.city,
-          district: formData.district,
-          division: formData.division,
-          zipcode: formData.zipcode,
-          area: formData.area || '',
+          ...formData,
           fullAddress: formattedAddress,
-          deliveryNote: formData.deliveryNote || '',
         },
         items: orderItems.map(item => ({
           productId: item._id,
@@ -495,49 +498,16 @@ export const PlaceOrder = ({
           price: item.price,
           total: item.price * item.quantity
         })),
-        subtotal: subtotal,
-        deliveryCharge: deliveryCharge,
-        discount: discount,
+        subtotal,
+        deliveryCharge,
+        discount,
         amount: totalAmount,
         paymentMethod: method,
         deliveryMethod: 'standard',
+        timestamp: new Date().toISOString(),
       };
 
-      // Check if backend is available
-      try {
-        await axios.get(`${backendUrl}/api/health`);
-      } catch (healthError) {
-        if (process.env.NODE_ENV === 'development') {
-          toast.warning('Backend not available. Running in development mode.');
-          // Simulate order placement
-          setCartItems({});
-          toast.success('Order placed successfully! (Development Mode)');
-          navigate('/orders');
-          setIsLoading(false);
-          return;
-        }
-        throw new Error('Backend service unavailable. Please try again later.');
-      }
-
-      switch (method) {
-        case PAYMENT_METHODS.COD:
-          await handleCOD(orderData);
-          break;
-        case PAYMENT_METHODS.BKASH:
-          await handleBkash(orderData);
-          break;
-        case PAYMENT_METHODS.NAGAD:
-          await handleNagad(orderData);
-          break;
-        case PAYMENT_METHODS.ROCKET:
-          toast.info('Rocket payment is coming soon!');
-          break;
-        case PAYMENT_METHODS.STRIPE:
-          toast.info('Stripe payment is coming soon!');
-          break;
-        default:
-          toast.error('Invalid payment method selected');
-      }
+      await handlePayment(orderData, method);
 
     } catch (error) {
       console.error('Order placement error:', error);
@@ -558,19 +528,15 @@ export const PlaceOrder = ({
   }, [
     isAuthenticated,
     orderItems,
-    validateForm,
+    isFormValid,
     method,
     formData,
     subtotal,
     deliveryCharge,
     discount,
     totalAmount,
-    handleCOD,
-    handleBkash,
-    handleNagad,
+    handlePayment,
     navigate,
-    setCartItems,
-    backendUrl,
   ]);
 
   // --- Effects ---
@@ -582,11 +548,7 @@ export const PlaceOrder = ({
   }, [isAuthenticated, navigate]);
 
   useEffect(() => {
-    if (totalAmount > 50000) {
-      setIsCodAvailable(false);
-    } else {
-      setIsCodAvailable(true);
-    }
+    setIsCodAvailable(totalAmount <= 50000);
   }, [totalAmount]);
 
   // ============================================================
@@ -596,6 +558,7 @@ export const PlaceOrder = ({
     <form 
       onSubmit={onSubmitHandler} 
       className={`flex flex-col lg:flex-row justify-between gap-6 pt-5 sm:pt-14 min-h-[80vh] border-t ${className}`}
+      noValidate
     >
       {/* ===== Left Side: Delivery Information ===== */}
       <div className="flex flex-col gap-4 w-full lg:max-w-[500px]">
@@ -725,35 +688,15 @@ export const PlaceOrder = ({
         {/* Cart Total */}
         {showCartTotal && (
           <div className="mb-6">
-            <div className="bg-gray-50 p-4 rounded-lg border border-gray-200">
-              <h3 className="font-semibold text-gray-800 text-sm mb-3">Order Summary</h3>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Subtotal</span>
-                  <span className="font-medium">{currency}{subtotal.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Delivery Charge</span>
-                  <span className="font-medium">
-                    {subtotal > 0 ? `${currency}${deliveryCharge.toFixed(2)}` : 'Free'}
-                  </span>
-                </div>
-                {discount > 0 && (
-                  <div className="flex justify-between text-green-600">
-                    <span>Discount ({discount}%)</span>
-                    <span>-{currency}{(subtotal * discount / 100).toFixed(2)}</span>
-                  </div>
-                )}
-                <hr className="my-2 border-gray-200" />
-                <div className="flex justify-between font-semibold text-base">
-                  <span>Total</span>
-                  <span>{currency}{totalAmount.toFixed(2)}</span>
-                </div>
-                <p className="text-xs text-gray-400 mt-1">
-                  {formData.division && `Delivery to: ${formData.division}`}
-                </p>
-              </div>
-            </div>
+            <OrderSummary
+              subtotal={subtotal}
+              deliveryCharge={deliveryCharge}
+              discount={discount}
+              totalAmount={totalAmount}
+              currency={currency}
+              itemsCount={orderItems.length}
+              division={formData.division}
+            />
           </div>
         )}
 
@@ -763,7 +706,6 @@ export const PlaceOrder = ({
             <Title text1="PAYMENT" text2="METHOD" />
             
             <div className="mt-4 space-y-3">
-              {/* bKash */}
               <PaymentMethod
                 method={PAYMENT_METHODS.BKASH}
                 selected={method === PAYMENT_METHODS.BKASH}
@@ -774,7 +716,6 @@ export const PlaceOrder = ({
                 recommended={true}
               />
 
-              {/* Nagad */}
               <PaymentMethod
                 method={PAYMENT_METHODS.NAGAD}
                 selected={method === PAYMENT_METHODS.NAGAD}
@@ -784,17 +725,17 @@ export const PlaceOrder = ({
                 description="Mobile banking (Nagad)"
               />
 
-              {/* Rocket */}
               <PaymentMethod
                 method={PAYMENT_METHODS.ROCKET}
                 selected={method === PAYMENT_METHODS.ROCKET}
-                onClick={() => setMethod(PAYMENT_METHODS.ROCKET)}
+                onClick={() => {
+                  toast.info('Rocket payment is coming soon!');
+                }}
                 icon={assets.rocket_logo}
                 label="Rocket"
                 description="DBBL Mobile Banking"
               />
 
-              {/* Cash on Delivery */}
               <PaymentMethod
                 method={PAYMENT_METHODS.COD}
                 selected={method === PAYMENT_METHODS.COD}
@@ -808,9 +749,9 @@ export const PlaceOrder = ({
                 label="Cash on Delivery"
                 description="Pay when you receive"
                 icon={assets.cod_icon}
+                disabled={!isCodAvailable}
               />
 
-              {/* International Payments */}
               <div className="mt-2 pt-2 border-t border-gray-200">
                 <p className="text-xs text-gray-400 mb-2">International Payments</p>
                 <PaymentMethod
@@ -825,40 +766,12 @@ export const PlaceOrder = ({
               </div>
             </div>
 
-            {/* Order Summary */}
-            <div className="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-100">
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-gray-600">Items ({orderItems.length})</span>
-                <span className="font-medium">{currency}{subtotal.toFixed(2)}</span>
-              </div>
-              {discount > 0 && (
-                <div className="flex justify-between text-sm mb-2 text-green-600">
-                  <span>Discount ({discount}%)</span>
-                  <span>-{currency}{(subtotal * discount / 100).toFixed(2)}</span>
-                </div>
-              )}
-              <div className="flex justify-between text-sm mb-2">
-                <span className="text-gray-600">Delivery</span>
-                <span className="font-medium">
-                  {subtotal > 0 ? currency + deliveryCharge.toFixed(2) : 'Free'}
-                </span>
-              </div>
-              <hr className="my-2 border-gray-200" />
-              <div className="flex justify-between font-semibold text-base">
-                <span>Total</span>
-                <span>{currency}{totalAmount.toFixed(2)}</span>
-              </div>
-              <p className="text-xs text-gray-400 mt-1">
-                * Free delivery on orders over ৳500
-              </p>
-            </div>
-
             {/* Place Order Button */}
             <div className="w-full text-end mt-6">
               <button
-                disabled={isLoading || !isFormValid || orderItems.length === 0}
+                disabled={isLoading || !isFormValid || orderItems.length === 0 || (method === PAYMENT_METHODS.COD && !isCodAvailable)}
                 type="submit"
-                className="w-full bg-black text-black  py-3.5 text-sm font-medium uppercase tracking-wider rounded-lg 
+                className="w-full bg-black text-white py-3.5 text-sm font-medium uppercase tracking-wider rounded-lg 
                          hover:bg-gray-800 active:scale-[0.98] transition-all duration-300
                          disabled:bg-gray-300 disabled:cursor-not-allowed disabled:active:scale-100
                          flex items-center justify-center gap-2"
@@ -886,7 +799,4 @@ export const PlaceOrder = ({
   );
 };
 
-// ============================================================
-// Default Export
-// ============================================================
 export default PlaceOrder;

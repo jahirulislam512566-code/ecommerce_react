@@ -4,28 +4,47 @@ import {
   getProducts, 
   singleProduct, 
   deleteProduct,
-  addProductReview
+  addProductReview,
+  // ✅ Remove these if they don't exist yet
+  // getProductsByCategory,
+  // getFeaturedProducts,
+  // getNewArrivals
 } from '../controllers/productController.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
 import upload from '../middleware/multer.js';
 
 const router = express.Router();
 
-// 💡 FIXED: Maps cleanly to -> GET http://localhost:4000/api/product/list
+// ============================================================
+// ✅ PUBLIC ROUTES (No authentication required)
+// ============================================================
+
+// ✅ GET all products - Supports both /list and / (root)
+router.route('/').get(getProducts);
 router.route('/list').get(getProducts);
 
-// 💡 FIXED: Maps cleanly to -> POST http://localhost:4000/api/product/add
-// Supports the frontend FormData file collection array key named 'images'
+// ✅ GET single product by ID
+router.route('/:id').get(singleProduct);
+
+// ✅ OPTIONAL: Add these when you create the controller functions
+// router.route('/category/:category').get(getProductsByCategory);
+// router.route('/featured').get(getFeaturedProducts);
+// router.route('/new-arrivals').get(getNewArrivals);
+
+// ============================================================
+// ✅ PROTECTED ROUTES (Admin only)
+// ============================================================
+
+// ✅ POST create product - Admin only
 router.route('/add').post(protect, admin, upload.array('images', 10), createProduct);
 
-// 💡 FIXED: Maps cleanly to -> POST http://localhost:4000/api/product/remove
-// Intercepts the axios.post line from List.jsx and processes { id } from the body
+// ✅ POST delete product - Admin only
 router.route('/remove').post(protect, admin, deleteProduct);
 
-// Protected user review posting hook pipeline
+// ✅ POST add product review - Authenticated users only
 router.route('/review').post(protect, addProductReview);
 
-// 💡 Dynamic ID routes are safely kept at the bottom so they don't block static naming paths
-router.route('/:id').get(singleProduct);
+// ✅ OPTIONAL: Update product - Admin only
+// router.route('/:id').put(protect, admin, updateProduct);
 
 export default router;
