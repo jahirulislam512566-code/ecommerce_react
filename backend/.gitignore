@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Backend Node.js dependencies
 node_modules/
 npm-debug.log*
@@ -71,3 +72,7 @@ tmp/
 temp/
 *.tmp
 .vercel
+=======
+.vercel
+.env*
+>>>>>>> 22b6a29e22103123523f3f2cdc1f6b0a016e3fda

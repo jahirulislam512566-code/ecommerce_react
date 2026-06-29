@@ -19,111 +19,99 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
 const isProduction = process.env.NODE_ENV === "production";
 const isDevelopment = process.env.NODE_ENV === "development";
 
 // ================================
-// Validate Environment Variables
+// ENV VALIDATION
 // ================================
-
 const requiredEnv = ["MONGODB_URI", "JWT_SECRET"];
-const optionalEnv = ["CLOUDINARY_NAME", "CLOUDINARY_API_KEY", "CLOUDINARY_SECRET_KEY"];
-
-const missingRequired = requiredEnv.filter(key => !process.env[key]);
+const missingRequired = requiredEnv.filter((key) => !process.env[key]);
 
 if (missingRequired.length > 0) {
-    console.error("❌ Missing required environment variables:", missingRequired.join(", "));
+    console.error("❌ Missing required env:", missingRequired);
     process.exit(1);
 }
 
-// Log optional missing variables
-const missingOptional = optionalEnv.filter(key => !process.env[key]);
-if (missingOptional.length > 0) {
-    console.warn("⚠️ Optional environment variables missing:", missingOptional.join(", "));
-    console.warn("⚠️ Cloudinary features may not work properly");
-}
-
-console.log("✅ All required environment variables are present");
-
 // ================================
-// Security Headers
+// SECURITY (Helmet)
 // ================================
-
 app.use(
     helmet({
         crossOriginResourcePolicy: { policy: "cross-origin" },
         crossOriginEmbedderPolicy: false,
-        crossOriginOpenerPolicy: { policy: "same-origin" },
-        contentSecurityPolicy: isProduction ? undefined : false,
     })
 );
 
 // ================================
-// Body Parser
+// BODY PARSER
 // ================================
-
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // ================================
-// Static Files
+// STATIC FILES (DEV ONLY)
 // ================================
-
-// Serve uploaded files (only in development)
 if (isDevelopment) {
     app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 }
 
 // ================================
-// CORS Configuration
+// CORS FIX (IMPORTANT)
 // ================================
 
 const allowedOrigins = [
-    // Development
     "http://localhost:3000",
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:5175",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:5174",
-    
-    // Production
-    "https://ecommerce-react-8sid-dhm6429bo.vercel.app/",
-    "https://ecommerce-react-8sid.vercel.app/",
-    // Add your production URL here
-    // "https://yourdomain.com",
-    // "https://www.yourdomain.com",
+
+    // Production (NO trailing slash)
+    "https://ecommerce-react-8sid-dhm6429bo.vercel.app",
+    "https://ecommerce-react-8sid.vercel.app",
 ];
 
 const corsOptions = {
     origin: (origin, callback) => {
-        // Allow requests with no origin (like mobile apps or curl)
         if (!origin) return callback(null, true);
 
-        // Allow all in development
         if (isDevelopment) return callback(null, true);
 
-        // Check production origins
+        // ✅ FIX: allow ALL Vercel preview deployments
+        if (origin.includes("vercel.app")) {
+            return callback(null, true);
+        }
+
         if (allowedOrigins.includes(origin)) {
             return callback(null, true);
         }
 
-        console.warn(`⚠️ CORS blocked: ${origin}`);
+        console.warn("❌ CORS blocked:", origin);
         callback(new Error("Not allowed by CORS"));
     },
+
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "token", "Accept", "Origin"],
-    exposedHeaders: ["Content-Length", "X-Request-Id"],
-    maxAge: 86400, // 24 hours
+    allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "token",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+    ],
 };
-
 app.use(cors(corsOptions));
 
-// ================================
-// Request Logging (Development Only)
-// ================================
+// ✅ IMPORTANT: Handle preflight requests
+app.options("*", cors(corsOptions));
 
+// ================================
+// REQUEST LOG (DEV ONLY)
+// ================================
 if (isDevelopment) {
     app.use((req, res, next) => {
         console.log(`📤 ${req.method} ${req.url}`);
@@ -132,17 +120,16 @@ if (isDevelopment) {
 }
 
 // ================================
-// Routes
+// ROUTES
 // ================================
 
-// Health Check
+// Health check
 app.get("/", (req, res) => {
     res.json({
         success: true,
         message: "API Running",
-        version: "1.0.0",
         environment: isDevelopment ? "development" : "production",
-        timestamp: new Date().toISOString(),
+        time: new Date().toISOString(),
     });
 });
 
@@ -150,126 +137,44 @@ app.get("/health", (req, res) => {
     res.json({
         success: true,
         uptime: process.uptime(),
-        timestamp: new Date().toISOString(),
         memory: process.memoryUsage(),
-        nodeVersion: process.version,
-        environment: isDevelopment ? "development" : "production",
     });
 });
 
-// API Routes
+// API routes
 app.use("/api/user", userRouter);
 app.use("/api/product", productRouter);
 app.use("/api/cart", cartRouter);
 app.use("/api/order", orderRouter);
 
-// API Documentation (Development Only)
-if (isDevelopment) {
-    app.get("/api", (req, res) => {
-        res.json({
-            success: true,
-            message: "API Documentation",
-            endpoints: {
-                user: {
-                    register: "POST /api/user/register",
-                    login: "POST /api/user/login",
-                    adminLogin: "POST /api/user/admin",
-                    profile: "GET /api/user/profile",
-                },
-                product: {
-                    getAll: "GET /api/product",
-                    getById: "GET /api/product/:id",
-                    add: "POST /api/product/add (Admin)",
-                    update: "PUT /api/product/:id (Admin)",
-                    delete: "DELETE /api/product/:id (Admin)",
-                },
-                cart: {
-                    get: "GET /api/cart",
-                    add: "POST /api/cart/add",
-                    update: "PUT /api/cart/update",
-                    remove: "DELETE /api/cart/remove/:productId",
-                    clear: "DELETE /api/cart/clear",
-                },
-                order: {
-                    place: "POST /api/order/place",
-                    userOrders: "GET /api/order/userorders",
-                    getById: "GET /api/order/:orderId",
-                    cancel: "PUT /api/order/:orderId/cancel",
-                    adminList: "GET /api/order/list (Admin)",
-                },
-            },
-        });
-    });
-}
-
 // ================================
-// 404 Handler
+// 404 HANDLER
 // ================================
-
 app.use((req, res) => {
     res.status(404).json({
         success: false,
-        message: `Route ${req.method} ${req.url} not found`,
-        ...(isDevelopment && { availableRoutes: "/api" }),
+        message: `Route not found: ${req.method} ${req.url}`,
     });
 });
 
 // ================================
-// Global Error Handler
+// GLOBAL ERROR HANDLER
 // ================================
-
 app.use((err, req, res, next) => {
-    // Log error
-    console.error("❌ Error occurred:", {
-        name: err.name,
-        message: err.message || "No message provided",
-        stack: isDevelopment ? err.stack : undefined,
-        code: err.code,
-        status: err.status,
-        method: req.method,
-        url: req.url,
-    });
+    console.error("❌ Error:", err.message);
 
-    // Handle specific error types
-    const errorResponses = {
-        ValidationError: {
-            status: 400,
-            message: "Validation Error",
-            errors: Object.values(err.errors).map((e) => e.message),
-        },
-        MongoError: {
-            status: 409,
-            message: "Duplicate entry found",
-            field: err.keyPattern ? Object.keys(err.keyPattern)[0] : undefined,
-        },
-        "Not allowed by CORS": {
-            status: 403,
-            message: "Not allowed by CORS",
-        },
-    };
+    const statusCode = err.status || 500;
 
-    const response = errorResponses[err.name] || errorResponses[err.message];
-    if (response) {
-        return res.status(response.status).json({ success: false, ...response });
-    }
-
-    // Default error response
-    const statusCode = err.status || err.statusCode || 500;
     res.status(statusCode).json({
         success: false,
         message: err.message || "Internal Server Error",
-        ...(isDevelopment && {
-            stack: err.stack,
-            name: err.name,
-            code: err.code,
-        }),
+        ...(isDevelopment && { stack: err.stack }),
     });
 });
 
 // ================================
-// Process Error Handlers
+// PROCESS ERRORS
 // ================================
-
 process.on("unhandledRejection", (err) => {
     console.error("❌ Unhandled Rejection:", err);
 });
@@ -280,54 +185,33 @@ process.on("uncaughtException", (err) => {
 });
 
 // ================================
-// Server Startup
+// START SERVER
 // ================================
-
 const startServer = async () => {
     try {
-        // Connect to MongoDB
         await connectDB();
         console.log("✅ MongoDB Connected");
 
-        // Connect to Cloudinary (optional)
         try {
             await connectCloudinary();
             console.log("✅ Cloudinary Connected");
-        } catch (error) {
-            console.warn("⚠️ Cloudinary connection failed:", error.message);
-            console.warn("⚠️ Images will be stored locally");
+        } catch (err) {
+            console.warn("⚠️ Cloudinary failed:", err.message);
         }
 
-        // Start server
         if (!process.env.VERCEL) {
-            const server = app.listen(PORT, () => {
-                console.log(`🚀 Server running on http://localhost:${PORT}`);
-                console.log(`📚 Environment: ${isDevelopment ? "development" : "production"}`);
-                if (isDevelopment) {
-                    console.log(`📦 API Docs: http://localhost:${PORT}/api`);
-                }
-            });
-
-            // Handle server errors
-            server.on("error", (error) => {
-                if (error.code === "EADDRINUSE") {
-                    console.error(`❌ Port ${PORT} is already in use`);
-                    process.exit(1);
-                }
-                console.error("❌ Server error:", error);
+            app.listen(PORT, () => {
+                console.log(`🚀 Server running: http://localhost:${PORT}`);
             });
         } else {
-            console.log("✅ Running on Vercel - Serverless mode");
+            console.log("🚀 Running on Vercel (serverless mode)");
         }
-    } catch (error) {
-        console.error("❌ Startup Error:", error);
+    } catch (err) {
+        console.error("❌ Startup Error:", err);
         process.exit(1);
     }
 };
 
 startServer();
 
-// ================================
-
-// ================================
 export default app;
