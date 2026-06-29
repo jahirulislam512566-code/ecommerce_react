@@ -3,7 +3,9 @@ import axios from 'axios';
 import { toast } from 'react-toastify';
 
 // ✅ API Base URL with /api at the end
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
+const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  'https://ecommerce-react-drab.vercel.app/api';
 
 console.log('🔧 API Base URL:', API_BASE_URL);
 
