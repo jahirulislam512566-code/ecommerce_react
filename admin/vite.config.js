@@ -1,31 +1,29 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'  
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    tailwindcss(),  // Add this line for Tailwind v4
+  ],
   build: {
-    chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (id.includes('node_modules')) {
-            if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
-              return 'vendor-react'
-            }
-            if (id.includes('recharts') || id.includes('lucide-react')) {
-              return 'vendor-ui'
-            }
-            if (id.includes('@reduxjs') || id.includes('react-redux')) {
-              return 'vendor-redux'
+            if (id.includes('react') || id.includes('react-dom')) {
+              return 'react-vendor'
             }
             return 'vendor'
           }
         }
       }
-    }
+    },
+    chunkSizeWarningLimit: 1000
   },
   server: {
-    port: 5174,
+    port: 5173,
     proxy: {
       '/api': {
         target: 'http://localhost:4000',

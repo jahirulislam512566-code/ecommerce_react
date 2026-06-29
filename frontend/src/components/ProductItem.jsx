@@ -1,4 +1,5 @@
-import React, { useCallback, useState, useMemo } from 'react';
+// components/ProductItem.jsx
+import React, { useCallback, useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useShop } from '../context/ShopContext';
 import { toast } from 'react-toastify';
@@ -32,7 +33,7 @@ export const ProductItem = ({
   className = '',
   lazyLoad = true,
   onProductClick,
-  variant = 'default', // 'default', 'compact', 'featured'
+  variant = 'default',
   showQuickAdd = true,
   showWishlist = false,
   showSizeSelector = true,
@@ -47,6 +48,17 @@ export const ProductItem = ({
   const [selectedSize, setSelectedSize] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [isWishlisted, setIsWishlisted] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  // --- Check if mobile ---
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 640);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   // --- Computed Values ---
   const fallbackImage = useMemo(() => 
@@ -188,29 +200,42 @@ export const ProductItem = ({
   const renderQuickAddButton = () => {
     if (!showQuickAdd) return null;
 
+    // ✅ Mobile: Always visible with gray background and white text
+    // ✅ Desktop: Hover effect with black background
+    const buttonClasses = isMobile
+      ? `
+        relative w-full mt-2 
+        bg-gray-600 text-white 
+        py-2.5 px-4 text-sm font-medium rounded-lg
+        flex items-center justify-center gap-2
+        transition-all duration-300
+        ${isOutOfStock ? 'opacity-50 cursor-not-allowed' : 'hover:bg-gray-700 active:scale-95'}
+      `
+      : `
+        absolute bottom-0 left-0 right-0 
+        text-white font-medium py-3.5 px-4
+        flex items-center justify-center gap-2
+        transition-all duration-300 ease-in-out
+        ${isOutOfStock 
+          ? 'bg-gray-600 cursor-not-allowed' 
+          : 'bg-black/90 hover:bg-black hover:scale-[1.02] active:scale-[0.98]'
+        }
+        opacity-0 group-hover:opacity-100 
+        translate-y-full group-hover:translate-y-0
+        shadow-lg hover:shadow-xl
+        z-10
+      `;
+
     return (
       <button
         onClick={handleAddToCart}
         disabled={isAdding || isOutOfStock}
-        className={`
-          absolute bottom-0 left-0 right-0 
-          text-white font-medium py-3.5 px-4
-          flex items-center justify-center gap-2
-          transition-all duration-300 ease-in-out
-          ${isOutOfStock 
-            ? 'bg-gray-600 cursor-not-allowed' 
-            : 'bg-black/90 hover:bg-black hover:scale-[1.02] active:scale-[0.98]'
-          }
-          opacity-0 group-hover:opacity-100 
-          translate-y-full group-hover:translate-y-0
-          shadow-lg hover:shadow-xl
-          z-10
-        `}
+        className={buttonClasses}
         aria-label={`Quick Add ${name} to cart`}
       >
         {isAdding ? (
           <>
-            <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
             </svg>
@@ -220,7 +245,7 @@ export const ProductItem = ({
           'Out of Stock'
         ) : (
           <>
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
             </svg>
             Add to Cart
@@ -357,8 +382,8 @@ export const ProductItem = ({
           {/* Wishlist Button */}
           {renderWishlistButton()}
 
-          {/* Quick Add to Cart Button */}
-          {renderQuickAddButton()}
+          {/* Quick Add to Cart Button - Desktop hover version */}
+          {!isMobile && renderQuickAddButton()}
 
           {/* Overlay */}
           <div className="
@@ -416,6 +441,10 @@ export const ProductItem = ({
 
           {/* Stock Status */}
           {renderStockStatus()}
+
+          {/* ===== Mobile: Add to Cart Button (Always Visible) ===== */}
+          {isMobile && renderQuickAddButton()}
+          
         </div>
       </Link>
 
@@ -433,131 +462,4 @@ export const ProductItem = ({
   );
 };
 
-// ============================================================
-// ProductItemSkeleton Component
-// ============================================================
-export const ProductItemSkeleton = ({ variant = 'default' }) => {
-  if (variant === 'compact') {
-    return (
-      <div className="flex gap-4 items-center animate-pulse">
-        <div className="w-24 h-24 bg-gray-200 rounded-lg" />
-        <div className="flex-1 space-y-2">
-          <div className="h-4 bg-gray-200 rounded w-3/4" />
-          <div className="h-4 bg-gray-200 rounded w-1/2" />
-          <div className="h-8 bg-gray-200 rounded w-1/3" />
-        </div>
-      </div>
-    );
-  }
-
-  if (variant === 'featured') {
-    return (
-      <div className="animate-pulse bg-white rounded-2xl overflow-hidden shadow-xl">
-        <div className="aspect-[16/9] bg-gray-200" />
-        <div className="p-6 space-y-3">
-          <div className="h-3 bg-gray-200 rounded w-1/4" />
-          <div className="h-6 bg-gray-200 rounded w-3/4" />
-          <div className="h-4 bg-gray-200 rounded w-1/3" />
-          <div className="h-10 bg-gray-200 rounded w-1/2" />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="animate-pulse bg-white rounded-xl overflow-hidden border border-gray-100">
-      <div className="aspect-[3/4] bg-gray-200" />
-      <div className="p-4 space-y-3">
-        <div className="h-3 bg-gray-200 rounded w-1/4" />
-        <div className="h-4 bg-gray-200 rounded w-3/4" />
-        <div className="h-4 bg-gray-200 rounded w-1/2" />
-        <div className="h-4 bg-gray-200 rounded w-1/3" />
-        <div className="h-10 bg-gray-200 rounded w-full" />
-      </div>
-    </div>
-  );
-};
-
-// ============================================================
-// ProductGrid Component
-// ============================================================
-export const ProductGrid = ({ 
-  products = [], 
-  columns = 4, 
-  variant = 'default',
-  className = '',
-  onProductClick,
-  showQuickAdd = true,
-  showWishlist = true,
-  showSizeSelector = true,
-  loading = false,
-  skeletonCount = 8,
-}) => {
-  const gridCols = {
-    2: 'grid-cols-2',
-    3: 'grid-cols-2 sm:grid-cols-3',
-    4: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4',
-    5: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5',
-    6: 'grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6',
-  };
-
-  if (loading) {
-    return (
-      <div className={`grid ${gridCols[columns] || gridCols[4]} gap-4 md:gap-6 ${className}`}>
-        {Array.from({ length: skeletonCount }).map((_, index) => (
-          <ProductItemSkeleton key={`skeleton-${index}`} variant={variant} />
-        ))}
-      </div>
-    );
-  }
-
-  if (products.length === 0) {
-    return (
-      <div className="text-center py-16">
-        <div className="text-4xl mb-4">🛍️</div>
-        <h3 className="text-lg font-medium text-gray-900">No products found</h3>
-        <p className="text-gray-500 mt-1">Check back later for new arrivals</p>
-      </div>
-    );
-  }
-
-  const getVariantClasses = () => {
-    switch (variant) {
-      case 'compact': return 'gap-3';
-      case 'featured': return 'gap-6';
-      default: return 'gap-4 md:gap-6';
-    }
-  };
-
-  return (
-    <div className={`grid ${gridCols[columns] || gridCols[4]} ${getVariantClasses()} ${className}`}>
-      {products.map((product, index) => (
-        <ProductItem
-          key={product._id || product.id || index}
-          id={product._id || product.id}
-          image={product.image}
-          name={product.name}
-          price={product.price}
-          discount={product.discount}
-          category={product.category}
-          sizes={product.sizes}
-          rating={product.rating}
-          reviewCount={product.reviewCount}
-          isNew={product.isNew}
-          isBestSeller={product.isBestSeller}
-          stock={product.stock}
-          variant={variant}
-          onProductClick={onProductClick}
-          showQuickAdd={showQuickAdd}
-          showWishlist={showWishlist}
-          showSizeSelector={showSizeSelector}
-        />
-      ))}
-    </div>
-  );
-};
-
-// ============================================================
-// Default Export
-// ============================================================
 export default ProductItem;

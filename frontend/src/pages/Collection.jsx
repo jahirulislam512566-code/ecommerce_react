@@ -1,8 +1,10 @@
+// pages/Collection.jsx
 import React, { useContext, useEffect, useState, useMemo, useCallback } from "react";
 import { useShop } from "../context/ShopContext";
 import { assets } from "../assets/assets";
 import { Title } from "../components/Title";
-import { ProductItem, ProductItemSkeleton } from "../components/ProductItem";
+import ProductItem from '../components/ProductItem';
+import ProductItemSkeleton from '../components/ProductItemSkeleton';
 
 // ============================================================
 // Constants & Configuration
@@ -35,7 +37,7 @@ export const Collection = ({
   className = '',
 }) => {
   // --- Hooks ---
-  const { products, searchQuery, showSearchBar, isLoadingProducts } = useShop();
+  const { products, searchQuery, showSearchBar, isLoadingProducts, currency } = useShop();
   
   // --- State ---
   const [showFilter, setShowFilter] = useState(showFilterInitially);
@@ -65,7 +67,7 @@ export const Collection = ({
         ? prev.filter(item => item !== category)
         : [...prev, category]
     );
-    setCurrentPage(1); // Reset page on filter change
+    setCurrentPage(1);
   }, []);
 
   const toggleSubCategory = useCallback((subCategory) => {
@@ -74,7 +76,7 @@ export const Collection = ({
         ? prev.filter(item => item !== subCategory)
         : [...prev, subCategory]
     );
-    setCurrentPage(1); // Reset page on filter change
+    setCurrentPage(1);
   }, []);
 
   const clearFilters = useCallback(() => {
@@ -88,7 +90,7 @@ export const Collection = ({
   const applyFilters = useCallback(() => {
     if (!products || products.length === 0) {
       setFilterProducts([]);
-      return;
+      return [];
     }
 
     let productsCopy = [...products];
@@ -97,7 +99,7 @@ export const Collection = ({
     if (showSearchBar && searchQuery) {
       const searchLower = searchQuery.toLowerCase();
       productsCopy = productsCopy.filter(item => 
-        item.name.toLowerCase().includes(searchLower) ||
+        item.name?.toLowerCase().includes(searchLower) ||
         item.category?.toLowerCase().includes(searchLower) ||
         item.subCategory?.toLowerCase().includes(searchLower)
       );
@@ -116,13 +118,6 @@ export const Collection = ({
         selectedSubCategories.includes(item.subCategory)
       );
     }
-
-    // Price range filter (optional enhancement)
-    // if (priceRange) {
-    //   productsCopy = productsCopy.filter(item => 
-    //     item.price >= priceRange.min && item.price <= priceRange.max
-    //   );
-    // }
 
     return productsCopy;
   }, [products, searchQuery, showSearchBar, selectedCategories, selectedSubCategories]);
@@ -155,10 +150,8 @@ export const Collection = ({
   // Apply filters and sorting
   useEffect(() => {
     const filtered = applyFilters();
-    if (filtered) {
-      const sorted = sortProducts(filtered);
-      setFilterProducts(sorted);
-    }
+    const sorted = sortProducts(filtered);
+    setFilterProducts(sorted);
   }, [applyFilters, sortProducts]);
 
   // Reset loading state
@@ -197,9 +190,9 @@ export const Collection = ({
   }, []);
 
   const renderSkeletons = useCallback(() => {
-    const count = enablePagination ? itemsPerPage : 8;
+    const count = enablePagination ? Math.min(itemsPerPage, 12) : 8;
     return Array.from({ length: count }).map((_, index) => (
-      <ProductItemSkeleton key={`skeleton-${index}`} />
+      <ProductItemSkeleton key={`skeleton-${index}`} variant="default" />
     ));
   }, [itemsPerPage, enablePagination]);
 
@@ -220,7 +213,7 @@ export const Collection = ({
     }
 
     return (
-      <div className="flex justify-center items-center gap-2 mt-8">
+      <div className="flex justify-center items-center gap-2 mt-8 flex-wrap">
         <button
           onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
           disabled={currentPage === 1}
@@ -238,7 +231,7 @@ export const Collection = ({
             >
               1
             </button>
-            {startPage > 2 && <span className="px-2">...</span>}
+            {startPage > 2 && <span className="px-2 text-gray-400">…</span>}
           </>
         )}
 
@@ -260,7 +253,7 @@ export const Collection = ({
 
         {endPage < totalPages && (
           <>
-            {endPage < totalPages - 1 && <span className="px-2">...</span>}
+            {endPage < totalPages - 1 && <span className="px-2 text-gray-400">…</span>}
             <button
               onClick={() => setCurrentPage(totalPages)}
               className="px-3 py-1 text-sm border rounded hover:bg-gray-50 transition-colors"
@@ -386,7 +379,7 @@ export const Collection = ({
       </aside>
 
       {/* ===== Product Section ===== */}
-      <div className="flex-1 min-w-0 ">
+      <div className="flex-1 min-w-0">
         {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-4">
           <Title text1={'ALL'} text2={'COLLECTIONS'} />
@@ -422,7 +415,7 @@ export const Collection = ({
           ${GRID_COLUMNS.mobile} 
           ${GRID_COLUMNS.tablet} 
           ${GRID_COLUMNS.desktop} 
-          gap-4 gap-y-6
+          gap-3 sm:gap-4 gap-y-6
         `}>
           {isLoading ? (
             renderSkeletons()
@@ -437,13 +430,23 @@ export const Collection = ({
                 discount={item.discount}
                 category={item.category}
                 sizes={item.sizes}
-                className="hover:shadow-lg transition-shadow duration-300 p-2"
+                rating={item.rating}
+                reviewCount={item.reviewCount}
+                stock={item.stock}
+                isNew={item.isNew}
+                isBestSeller={item.isBestSeller}
+                currency={currency}
+                showQuickAdd={true}
+                showWishlist={true}
+                showSizeSelector={true}
+                className="hover:shadow-lg transition-shadow duration-300 rounded-lg p-2 hover:bg-gray-50"
               />
             ))
           ) : (
             <div className="col-span-full text-center py-12">
               <div className="max-w-sm mx-auto">
-                <p className="text-gray-400 text-lg mb-2">No products found</p>
+                <div className="text-4xl mb-3">🔍</div>
+                <p className="text-gray-400 text-lg font-medium mb-2">No products found</p>
                 <p className="text-sm text-gray-300">
                   Try adjusting your filters or search terms
                 </p>

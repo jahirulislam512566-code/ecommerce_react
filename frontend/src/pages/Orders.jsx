@@ -1,8 +1,9 @@
-import React, { useContext, useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useContext, useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useShop } from '../context/ShopContext';
 import { Title } from '../components/Title';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
+import { toast } from 'react-toastify';
 
 // ============================================================
 // Constants
@@ -34,10 +35,22 @@ const STATUS_LABELS = {
   [ORDER_STATUS.REFUNDED]: 'Refunded',
 };
 
+const STATUS_ICONS = {
+  [ORDER_STATUS.PENDING]: '⏳',
+  [ORDER_STATUS.PROCESSING]: '⚙️',
+  [ORDER_STATUS.SHIPPED]: '🚚',
+  [ORDER_STATUS.DELIVERED]: '✅',
+  [ORDER_STATUS.CANCELLED]: '❌',
+  [ORDER_STATUS.REFUNDED]: '↩️',
+};
+
+const ITEMS_PER_PAGE = 10;
+const API_TIMEOUT = 15000;
+
 // ============================================================
 // OrderItem Component
 // ============================================================
-const OrderItem = ({ item, currency, onTrackOrder, onReorder, uniqueKey }) => {
+const OrderItem = React.memo(({ item, currency, onTrackOrder, onReorder, uniqueKey }) => {
   const getStatusColor = useCallback((status) => {
     return STATUS_COLORS[status] || 'bg-gray-400';
   }, []);
@@ -46,9 +59,20 @@ const OrderItem = ({ item, currency, onTrackOrder, onReorder, uniqueKey }) => {
     return STATUS_LABELS[status] || status;
   }, []);
 
+  const getStatusIcon = useCallback((status) => {
+    return STATUS_ICONS[status] || '📦';
+  }, []);
+
+  const getImageUrl = useCallback(() => {
+    if (!item.image) return '/placeholder-image.png';
+    if (Array.isArray(item.image)) {
+      return item.image[0] || '/placeholder-image.png';
+    }
+    return item.image;
+  }, [item.image]);
+
   return (
     <div 
-      key={uniqueKey} 
       className="py-4 border-t first:border-t-0 border-b border-gray-200 hover:bg-gray-50/50 transition-colors"
     >
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
@@ -57,7 +81,7 @@ const OrderItem = ({ item, currency, onTrackOrder, onReorder, uniqueKey }) => {
           <div className="flex-shrink-0">
             <img
               className="w-16 sm:w-20 h-16 sm:h-20 object-cover rounded-lg border border-gray-100"
-              src={Array.isArray(item.image) ? item.image[0] : (item.image || '/placeholder-image.png')}
+              src={getImageUrl()}
               alt={item.name || 'Product'}
               loading="lazy"
               onError={(e) => {
@@ -84,14 +108,13 @@ const OrderItem = ({ item, currency, onTrackOrder, onReorder, uniqueKey }) => {
             </div>
 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1.5 text-xs text-gray-500">
-              <p>Date: <span className="text-gray-700 font-medium">{item.date || 'N/A'}</span></p>
-              <p>Payment: <span className="text-gray-700 font-medium uppercase">{item.payment || 'COD'}</span></p>
+              <p>📅 <span className="text-gray-700 font-medium">{item.date || 'N/A'}</span></p>
+              <p>💳 <span className="text-gray-700 font-medium uppercase">{item.payment || 'COD'}</span></p>
               {item.trackingNumber && (
-                <p>Tracking: <span className="text-gray-700 font-medium">{item.trackingNumber}</span></p>
+                <p>📦 Tracking: <span className="text-gray-700 font-medium">{item.trackingNumber}</span></p>
               )}
             </div>
 
-            {/* Order Items Summary (if multiple items) */}
             {item.totalItems && item.totalItems > 1 && (
               <p className="text-xs text-gray-400 mt-1">
                 + {item.totalItems - 1} more item{item.totalItems - 1 > 1 ? 's' : ''} in this order
@@ -105,8 +128,8 @@ const OrderItem = ({ item, currency, onTrackOrder, onReorder, uniqueKey }) => {
           {/* Status Badge */}
           <div className="flex items-center gap-2">
             <span className={`min-w-2 h-2 rounded-full ${getStatusColor(item.status)}`}></span>
-            <span className="text-sm font-medium capitalize text-gray-700">
-              {getStatusLabel(item.status)}
+            <span className="text-sm font-medium capitalize text-gray-700 flex items-center gap-1">
+              {getStatusIcon(item.status)} {getStatusLabel(item.status)}
             </span>
           </div>
 
@@ -134,7 +157,9 @@ const OrderItem = ({ item, currency, onTrackOrder, onReorder, uniqueKey }) => {
       </div>
     </div>
   );
-};
+});
+
+OrderItem.displayName = 'OrderItem';
 
 // ============================================================
 // OrderSkeleton Component
@@ -161,6 +186,108 @@ const OrderSkeleton = () => {
 };
 
 // ============================================================
+// EmptyState Component
+// ============================================================
+const EmptyState = ({ statusFilter, isAuthenticated }) => {
+  if (!isAuthenticated) {
+    return (
+      <div className="text-center py-16 border border-dashed border-gray-200 rounded-xl bg-gray-50/50">
+        <div className="max-w-sm mx-auto">
+          <div className="text-4xl mb-4">🔒</div>
+          <p className="font-medium text-gray-700">Please login to view your orders</p>
+          <p className="text-sm text-gray-400 mt-1">
+            Login to see your order history and track your purchases
+          </p>
+          <Link
+            to="/login"
+            className="inline-block mt-4 px-6 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors"
+          >
+            Login Now
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-center py-16 border border-dashed border-gray-200 rounded-xl bg-gray-50/50">
+      <div className="max-w-sm mx-auto">
+        <div className="text-4xl mb-4">📦</div>
+        <p className="font-medium text-gray-700">No orders found</p>
+        <p className="text-sm text-gray-400 mt-1">
+          {statusFilter !== 'all'
+            ? `No ${statusFilter.toLowerCase()} orders found. Try adjusting your filter.`
+            : "You haven't placed any orders yet. Start shopping!"}
+        </p>
+        <Link
+          to="/collection"
+          className="inline-block mt-4 px-6 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors"
+        >
+          Browse Products
+        </Link>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+// TrackOrderModal Component
+// ============================================================
+const TrackOrderModal = ({ orderId, onClose }) => {
+  if (!orderId) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="text-lg font-semibold">Track Order</h3>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+            aria-label="Close"
+          >
+            ✕
+          </button>
+        </div>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            Order ID: <span className="font-medium text-gray-900">{orderId}</span>
+          </p>
+          <div className="flex items-center gap-2 text-sm text-gray-500">
+            <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+            Order is being processed
+          </div>
+          <div className="space-y-2 text-sm text-gray-500">
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 bg-green-500 rounded-full"></span>
+              Order Confirmed
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full"></span>
+              Processing
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="inline-block w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+              Shipped - In Transit
+            </div>
+            <div className="flex items-center gap-2 opacity-50">
+              <span className="inline-block w-2 h-2 bg-gray-300 rounded-full"></span>
+              Delivered
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-full px-4 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
 // Main Orders Component
 // ============================================================
 export const Orders = ({
@@ -168,11 +295,21 @@ export const Orders = ({
   titleText2 = 'ORDERS',
   className = '',
   showFilters = true,
-  itemsPerPage = 10,
+  itemsPerPage = ITEMS_PER_PAGE,
 }) => {
   // --- Hooks ---
-  const { backendUrl, token, currency } = useShop();
+  const shopContext = useShop();
   
+  // ✅ Safely get context values with fallbacks
+  const backendUrl = shopContext.backendUrl || import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000';
+  const token = shopContext.token || localStorage.getItem('ecom_token') || '';
+  const currency = shopContext.currency || '$';
+  const isAuthenticated = shopContext.isAuthenticated || !!token;
+
+  // --- Refs ---
+  const isMounted = useRef(true);
+  const abortControllerRef = useRef(null);
+
   // --- State ---
   const [orderData, setOrderData] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
@@ -181,6 +318,8 @@ export const Orders = ({
   const [statusFilter, setStatusFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [totalSpent, setTotalSpent] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   // --- Memoized Values ---
   const totalPages = useMemo(() => {
@@ -202,56 +341,79 @@ export const Orders = ({
   }, [orderData]);
 
   const totalOrders = useMemo(() => orderData.length, [orderData]);
-  const totalSpent = useMemo(() => {
-    return orderData.reduce((sum, item) => sum + (item.price || 0) * (item.quantity || 0), 0);
-  }, [orderData]);
 
   // --- Generate Unique Key Helper ---
   const generateUniqueKey = useCallback((item, index) => {
-    // Create a unique key combining multiple identifiers
     const orderId = item.orderId || item._id || 'unknown';
     const productId = item.productId || item._id || 'unknown';
     const size = item.size || 'nosize';
     const timestamp = item.date || Date.now();
     
-    // Use a combination that's guaranteed to be unique
     return `${orderId}-${productId}-${size}-${index}-${timestamp}`;
   }, []);
 
   // --- Handlers ---
-  const loadOrderData = useCallback(async () => {
-    if (!token) {
+  const loadOrderData = useCallback(async (showLoading = true) => {
+    if (!token || !isAuthenticated) {
       setOrderData([]);
       setFilteredOrders([]);
       setIsLoading(false);
       return;
     }
 
+    // Cancel previous request if any
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    abortControllerRef.current = new AbortController();
+
     try {
-      setIsLoading(true);
+      if (showLoading) {
+        setIsLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
       setError(null);
 
-      const response = await axios.post(
+      const response = await axios.get(
         `${backendUrl}/api/order/userorders`,
-        {},
         { 
           headers: { 
-            token,
+            'Authorization': `Bearer ${token}`,
             'Content-Type': 'application/json',
           },
-          timeout: 15000,
+          timeout: API_TIMEOUT,
+          signal: abortControllerRef.current.signal,
         }
       );
 
+      if (!isMounted.current) return;
+
       if (response.data.success) {
         const allOrdersItemized = [];
+        let totalSpentAmount = 0;
         
-        // Process each order
-        response.data.orders.forEach((order) => {
-          // Ensure items array exists
+        const orders = response.data.orders || [];
+        
+        if (orders.length === 0) {
+          setOrderData([]);
+          setFilteredOrders([]);
+          setTotalSpent(0);
+          setIsLoading(false);
+          setIsRefreshing(false);
+          return;
+        }
+
+        orders.forEach((order) => {
           const items = order.items || [];
           
-          // If order has items, flatten them
+          const orderTotal = items.reduce((sum, item) => {
+            return sum + (item.price || 0) * (item.quantity || 0);
+          }, 0);
+          
+          totalSpentAmount += orderTotal;
+          
           if (items.length > 0) {
             items.forEach((item, itemIndex) => {
               allOrdersItemized.push({
@@ -259,21 +421,35 @@ export const Orders = ({
                 orderId: order._id,
                 status: order.status || ORDER_STATUS.PENDING,
                 payment: order.paymentMethod || order.payment || 'COD',
-                date: order.date ? new Date(order.date).toLocaleDateString() : new Date().toLocaleDateString(),
+                date: order.createdAt ? new Date(order.createdAt).toLocaleDateString('en-BD', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric'
+                }) : new Date().toLocaleDateString('en-BD', {
+                  day: 'numeric',
+                  month: 'short',
+                  year: 'numeric'
+                }),
                 trackingNumber: order.trackingNumber || null,
                 totalItems: items.length,
-                // Add unique identifiers
                 orderItemIndex: itemIndex,
-                orderDate: order.date || new Date().toISOString(),
+                orderDate: order.createdAt || order.date || new Date().toISOString(),
               });
             });
           } else {
-            // Handle empty orders (shouldn't happen, but just in case)
             allOrdersItemized.push({
               orderId: order._id,
               status: order.status || ORDER_STATUS.PENDING,
               payment: order.paymentMethod || order.payment || 'COD',
-              date: order.date ? new Date(order.date).toLocaleDateString() : new Date().toLocaleDateString(),
+              date: order.createdAt ? new Date(order.createdAt).toLocaleDateString('en-BD', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric'
+              }) : new Date().toLocaleDateString('en-BD', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric'
+              }),
               trackingNumber: order.trackingNumber || null,
               totalItems: 0,
               name: 'Order #' + order._id.slice(-6),
@@ -282,16 +458,16 @@ export const Orders = ({
               image: ['/placeholder-image.png'],
               size: 'N/A',
               orderItemIndex: 0,
-              orderDate: order.date || new Date().toISOString(),
+              orderDate: order.createdAt || order.date || new Date().toISOString(),
             });
           }
         });
 
-        // Sort by date (newest first)
         allOrdersItemized.sort((a, b) => {
-          return new Date(b.date) - new Date(a.date);
+          return new Date(b.orderDate) - new Date(a.orderDate);
         });
 
+        setTotalSpent(totalSpentAmount);
         setOrderData(allOrdersItemized);
         setFilteredOrders(allOrdersItemized);
         setCurrentPage(1);
@@ -299,19 +475,37 @@ export const Orders = ({
         throw new Error(response.data.message || 'Failed to load orders');
       }
     } catch (error) {
-      const errorMessage = error.response?.data?.message || error.message || 'Failed to load your orders';
-      setError(errorMessage);
-      console.error('Orders fetch error:', error);
+      if (axios.isCancel(error)) {
+        console.log('Request cancelled:', error.message);
+        return;
+      }
+
+      if (!isMounted.current) return;
+
+      console.error('❌ Orders fetch error:', error);
       
-      // If unauthorized, clear orders
+      const errorMessage = error.response?.data?.message || 
+                          error.message || 
+                          'Failed to load your orders';
+      
+      setError(errorMessage);
+      
       if (error.response?.status === 401) {
         setOrderData([]);
         setFilteredOrders([]);
+        toast.error('Please login to view your orders');
+      } else if (error.response?.status === 404) {
+        setError('Order service not available. Please try again later.');
+      } else if (error.code === 'ECONNABORTED') {
+        setError('Request timed out. Please check your connection and try again.');
       }
     } finally {
-      setIsLoading(false);
+      if (isMounted.current) {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
     }
-  }, [backendUrl, token]);
+  }, [backendUrl, token, isAuthenticated]);
 
   const applyFilters = useCallback(() => {
     let filtered = [...orderData];
@@ -325,24 +519,46 @@ export const Orders = ({
   }, [orderData, statusFilter]);
 
   const handleTrackOrder = useCallback((orderId) => {
-    // Open tracking modal or navigate to tracking page
     setSelectedOrder(orderId);
-    console.log(`[Analytics] Track order clicked: ${orderId}`);
   }, []);
 
   const handleReorder = useCallback((item) => {
-    // Add item to cart
-    console.log('[Analytics] Reorder clicked:', item);
+    toast.success(`Adding ${item.name} to cart...`);
+    // Add to cart logic here
   }, []);
 
   const handleRetry = useCallback(() => {
-    loadOrderData();
+    loadOrderData(true);
   }, [loadOrderData]);
+
+  const handleRefresh = useCallback(() => {
+    loadOrderData(false);
+  }, [loadOrderData]);
+
+  const handlePageChange = useCallback((page) => {
+    setCurrentPage(page);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, []);
 
   // --- Effects ---
   useEffect(() => {
-    loadOrderData();
-  }, [loadOrderData]);
+    isMounted.current = true;
+    
+    if (isAuthenticated) {
+      loadOrderData(true);
+    } else {
+      setOrderData([]);
+      setFilteredOrders([]);
+      setIsLoading(false);
+    }
+
+    return () => {
+      isMounted.current = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [isAuthenticated, loadOrderData]);
 
   useEffect(() => {
     applyFilters();
@@ -383,14 +599,22 @@ export const Orders = ({
     if (totalPages <= 1) return null;
 
     const pages = [];
-    for (let i = 1; i <= totalPages; i++) {
+    const maxVisiblePages = 5;
+    let startPage = Math.max(1, currentPage - Math.floor(maxVisiblePages / 2));
+    let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+
+    if (endPage - startPage + 1 < maxVisiblePages) {
+      startPage = Math.max(1, endPage - maxVisiblePages + 1);
+    }
+
+    for (let i = startPage; i <= endPage; i++) {
       pages.push(i);
     }
 
     return (
       <div className="flex justify-center items-center gap-2 mt-8">
         <button
-          onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+          onClick={() => handlePageChange(currentPage - 1)}
           disabled={currentPage === 1}
           className="px-3 py-1 text-sm border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           aria-label="Previous page"
@@ -398,10 +622,22 @@ export const Orders = ({
           ←
         </button>
 
+        {startPage > 1 && (
+          <>
+            <button
+              onClick={() => handlePageChange(1)}
+              className="px-3 py-1 text-sm border rounded hover:bg-gray-50 transition-colors"
+            >
+              1
+            </button>
+            {startPage > 2 && <span className="px-2 text-gray-400">…</span>}
+          </>
+        )}
+
         {pages.map(page => (
           <button
             key={`page-${page}`}
-            onClick={() => setCurrentPage(page)}
+            onClick={() => handlePageChange(page)}
             className={`
               px-3 py-1 text-sm border rounded transition-colors
               ${currentPage === page
@@ -416,8 +652,20 @@ export const Orders = ({
           </button>
         ))}
 
+        {endPage < totalPages && (
+          <>
+            {endPage < totalPages - 1 && <span className="px-2 text-gray-400">…</span>}
+            <button
+              onClick={() => handlePageChange(totalPages)}
+              className="px-3 py-1 text-sm border rounded hover:bg-gray-50 transition-colors"
+            >
+              {totalPages}
+            </button>
+          </>
+        )}
+
         <button
-          onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+          onClick={() => handlePageChange(currentPage + 1)}
           disabled={currentPage === totalPages}
           className="px-3 py-1 text-sm border rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           aria-label="Next page"
@@ -426,7 +674,7 @@ export const Orders = ({
         </button>
       </div>
     );
-  }, [currentPage, totalPages]);
+  }, [currentPage, totalPages, handlePageChange]);
 
   // ============================================================
   // Render
@@ -437,18 +685,32 @@ export const Orders = ({
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <Title text1={titleText1} text2={titleText2} />
         
-        {/* Order Stats */}
-        {!isLoading && totalOrders > 0 && (
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-gray-600">
-              Total Orders: <span className="font-semibold text-gray-900">{totalOrders}</span>
-            </span>
-            <span className="text-gray-300">|</span>
-            <span className="text-gray-600">
-              Total Spent: <span className="font-semibold text-gray-900">{currency}{totalSpent.toLocaleString()}</span>
-            </span>
-          </div>
-        )}
+        <div className="flex items-center gap-4">
+          {/* Order Stats */}
+          {!isLoading && totalOrders > 0 && (
+            <div className="flex items-center gap-4 text-sm">
+              <span className="text-gray-600">
+                Total Orders: <span className="font-semibold text-gray-900">{totalOrders}</span>
+              </span>
+              <span className="text-gray-300">|</span>
+              <span className="text-gray-600">
+                Total Spent: <span className="font-semibold text-gray-900">{currency}{totalSpent.toLocaleString()}</span>
+              </span>
+            </div>
+          )}
+
+          {/* Refresh Button */}
+          {isAuthenticated && !isLoading && totalOrders > 0 && (
+            <button
+              onClick={handleRefresh}
+              disabled={isRefreshing}
+              className="text-sm text-gray-400 hover:text-gray-600 transition-colors disabled:opacity-50"
+              aria-label="Refresh orders"
+            >
+              {isRefreshing ? '⟳' : '↻'}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filters */}
@@ -456,13 +718,13 @@ export const Orders = ({
 
       {/* Orders List */}
       <div className="mt-6">
-        {isLoading ? (
-          // Loading state
+        {!isAuthenticated ? (
+          <EmptyState statusFilter={statusFilter} isAuthenticated={false} />
+        ) : isLoading ? (
           Array.from({ length: 3 }).map((_, index) => (
             <OrderSkeleton key={`skeleton-${index}`} />
           ))
         ) : error ? (
-          // Error state
           <div className="text-center py-12">
             <div className="inline-block bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
               <p className="text-red-600 text-sm font-medium">⚠️ {error}</p>
@@ -475,10 +737,8 @@ export const Orders = ({
             </div>
           </div>
         ) : paginatedOrders.length > 0 ? (
-          // Orders list
           <div className="bg-white rounded-lg border border-gray-100 overflow-hidden shadow-sm">
             {paginatedOrders.map((item, index) => {
-              // Generate a truly unique key for each item
               const uniqueKey = generateUniqueKey(item, index);
               return (
                 <OrderItem
@@ -493,62 +753,18 @@ export const Orders = ({
             })}
           </div>
         ) : (
-          // Empty state
-          <div className="text-center py-16 border border-dashed border-gray-200 rounded-xl bg-gray-50/50">
-            <div className="max-w-sm mx-auto">
-              <div className="text-4xl mb-4">📦</div>
-              <p className="font-medium text-gray-700">No orders found</p>
-              <p className="text-sm text-gray-400 mt-1">
-                {statusFilter !== 'all'
-                  ? `No ${statusFilter.toLowerCase()} orders found. Try adjusting your filter.`
-                  : "You haven't placed any orders yet. Start shopping!"}
-              </p>
-              <Link
-                to="/collection"
-                className="inline-block mt-4 px-6 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors"
-              >
-                Browse Products
-              </Link>
-            </div>
-          </div>
+          <EmptyState statusFilter={statusFilter} isAuthenticated={true} />
         )}
       </div>
 
       {/* Pagination */}
       {!isLoading && !error && paginatedOrders.length > 0 && renderPagination()}
 
-      {/* Track Order Modal (Placeholder) */}
-      {selectedOrder && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-md w-full p-6">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-semibold">Track Order</h3>
-              <button
-                onClick={() => setSelectedOrder(null)}
-                className="text-gray-400 hover:text-gray-600 transition-colors"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="space-y-4">
-              <p className="text-sm text-gray-600">
-                Order ID: <span className="font-medium text-gray-900">{selectedOrder}</span>
-              </p>
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <span className="inline-block w-2 h-2 bg-blue-400 rounded-full"></span>
-                Order is being processed
-              </div>
-              <button
-                onClick={() => setSelectedOrder(null)}
-                className="w-full px-4 py-2 bg-black text-white text-sm font-medium rounded hover:bg-gray-800 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Track Order Modal */}
+      <TrackOrderModal 
+        orderId={selectedOrder} 
+        onClose={() => setSelectedOrder(null)} 
+      />
     </div>
   );
 };

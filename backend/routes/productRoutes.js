@@ -1,50 +1,58 @@
+// backend/routes/productRoutes.js
 import express from 'express';
 import { 
-  createProduct, 
-  getProducts, 
-  singleProduct, 
-  deleteProduct,
-  addProductReview,
-  // ✅ Remove these if they don't exist yet
-  // getProductsByCategory,
-  // getFeaturedProducts,
-  // getNewArrivals
+    addProduct,
+    getProducts, 
+    singleProduct,
+    updateProduct,
+    deleteProduct,
+    addProductReview,
+    getProductsByCategory,
+    getFeaturedProducts
 } from '../controllers/productController.js';
 import { protect, admin } from '../middleware/authMiddleware.js';
-import upload from '../middleware/multer.js';
+import upload, { debugMulter, handleMulterError, uploadMultiple } from '../middleware/multer.js';
 
 const router = express.Router();
 
 // ============================================================
-// ✅ PUBLIC ROUTES (No authentication required)
+// PUBLIC ROUTES
 // ============================================================
-
-// ✅ GET all products - Supports both /list and / (root)
-router.route('/').get(getProducts);
-router.route('/list').get(getProducts);
-
-// ✅ GET single product by ID
-router.route('/:id').get(singleProduct);
-
-// ✅ OPTIONAL: Add these when you create the controller functions
-// router.route('/category/:category').get(getProductsByCategory);
-// router.route('/featured').get(getFeaturedProducts);
-// router.route('/new-arrivals').get(getNewArrivals);
+router.get('/', getProducts);
+router.get('/list', getProducts);
+router.get('/:id', singleProduct);
+router.get('/category/:category', getProductsByCategory);
+router.get('/featured', getFeaturedProducts);
 
 // ============================================================
-// ✅ PROTECTED ROUTES (Admin only)
+// ADMIN ROUTES
 // ============================================================
+router.post('/add', 
+    protect, 
+    admin, 
+    debugMulter,
+    uploadMultiple,
+    handleMulterError,
+    addProduct
+);
 
-// ✅ POST create product - Admin only
-router.route('/add').post(protect, admin, upload.array('images', 10), createProduct);
+router.put('/:id', 
+    protect, 
+    admin, 
+    upload.array('images', 5),
+    handleMulterError,
+    updateProduct
+);
 
-// ✅ POST delete product - Admin only
-router.route('/remove').post(protect, admin, deleteProduct);
+router.delete('/:id', 
+    protect, 
+    admin, 
+    deleteProduct
+);
 
-// ✅ POST add product review - Authenticated users only
-router.route('/review').post(protect, addProductReview);
-
-// ✅ OPTIONAL: Update product - Admin only
-// router.route('/:id').put(protect, admin, updateProduct);
+// ============================================================
+// REVIEW ROUTE
+// ============================================================
+router.post('/review', protect, addProductReview);
 
 export default router;

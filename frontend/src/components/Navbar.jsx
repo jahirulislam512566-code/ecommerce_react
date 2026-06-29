@@ -1,7 +1,8 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
-import { NavLink, Link, useLocation } from 'react-router-dom';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { NavLink, Link, useLocation, useNavigate } from 'react-router-dom';
 import { assets } from "../assets/assets";
 import { useShop } from "../context/ShopContext";
+import { toast } from 'react-toastify';
 
 // ============================================================
 // Navigation Configuration
@@ -13,19 +14,25 @@ const NAV_ITEMS = [
   { label: 'CONTACT', path: '/contact', icon: '📞' },
 ];
 
+const MOBILE_BREAKPOINT = 640;
+const SCROLL_THRESHOLD = 10;
+
 // ============================================================
 // Navbar Component
 // ============================================================
 export const Navbar = () => {
   // --- Hooks ---
   const location = useLocation();
+  const navigate = useNavigate();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  
   const dropdownRef = useRef(null);
   const searchRef = useRef(null);
+  const mobileMenuRef = useRef(null);
   
   const { 
     setShowSearchBar, 
@@ -35,6 +42,26 @@ export const Navbar = () => {
     user,
     currency,
   } = useShop();
+
+  // --- Memoized Values ---
+  const cartCount = useMemo(() => {
+    try {
+      const count = getCartTotalItems();
+      return count > 0 ? count : null;
+    } catch {
+      return null;
+    }
+  }, [getCartTotalItems]);
+
+  const userInitials = useMemo(() => {
+    if (!user?.name) return 'U';
+    return user.name
+      .split(' ')
+      .map(n => n[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+  }, [user?.name]);
 
   // --- Handlers ---
   const handleSearchToggle = useCallback(() => {
@@ -48,16 +75,23 @@ export const Navbar = () => {
   const handleSearchSubmit = useCallback((e) => {
     e.preventDefault();
     if (searchQuery.trim()) {
-      // Navigate to collection with search query
-      window.location.href = `/collection?search=${encodeURIComponent(searchQuery)}`;
+      navigate(`/collection?search=${encodeURIComponent(searchQuery.trim())}`);
       setIsSearchOpen(false);
       setShowSearchBar(false);
+      setSearchQuery('');
     }
-  }, [searchQuery, setShowSearchBar]);
+  }, [searchQuery, setShowSearchBar, navigate]);
 
   const handleLogout = useCallback(async () => {
-    await logout();
-    setIsProfileDropdownOpen(false);
+    try {
+      await logout();
+      setIsProfileDropdownOpen(false);
+      setIsMobileMenuOpen(false);
+      toast.success('Logged out successfully');
+    } catch (error) {
+      console.error('Logout error:', error);
+      toast.error('Failed to logout. Please try again.');
+    }
   }, [logout]);
 
   const handleMobileMenuToggle = useCallback(() => {
@@ -68,17 +102,30 @@ export const Navbar = () => {
     setIsMobileMenuOpen(false);
   }, []);
 
+  const handleProfileDropdownToggle = useCallback(() => {
+    setIsProfileDropdownOpen(prev => !prev);
+  }, []);
+
   const handleClickOutside = useCallback((e) => {
     if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
       setIsProfileDropdownOpen(false);
     }
   }, []);
 
+  const handleEscapeKey = useCallback((e) => {
+    if (e.key === 'Escape') {
+      setIsSearchOpen(false);
+      setShowSearchBar(false);
+      setIsProfileDropdownOpen(false);
+      setIsMobileMenuOpen(false);
+    }
+  }, [setShowSearchBar]);
+
   // --- Effects ---
   // Handle scroll effect
   useEffect(() => {
     const handleScroll = () => {
-      setIsScrolled(window.scrollY > 10);
+      setIsScrolled(window.scrollY > SCROLL_THRESHOLD);
     };
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
@@ -89,6 +136,12 @@ export const Navbar = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [handleClickOutside]);
+
+  // Handle escape key
+  useEffect(() => {
+    document.addEventListener('keydown', handleEscapeKey);
+    return () => document.removeEventListener('keydown', handleEscapeKey);
+  }, [handleEscapeKey]);
 
   // Prevent body scroll when mobile menu is open
   useEffect(() => {
@@ -110,7 +163,7 @@ export const Navbar = () => {
   // Close mobile menu on window resize to desktop
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth >= 640 && isMobileMenuOpen) {
+      if (window.innerWidth >= MOBILE_BREAKPOINT && isMobileMenuOpen) {
         setIsMobileMenuOpen(false);
         document.body.style.overflow = '';
       }
@@ -118,18 +171,6 @@ export const Navbar = () => {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, [isMobileMenuOpen]);
-
-  // Close search on escape key
-  useEffect(() => {
-    const handleEscape = (e) => {
-      if (e.key === 'Escape') {
-        setIsSearchOpen(false);
-        setShowSearchBar(false);
-      }
-    };
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [setShowSearchBar]);
 
   // --- Render Helpers ---
   const getNavLinkClass = useCallback(({ isActive }) => 
@@ -148,28 +189,22 @@ export const Navbar = () => {
     []
   );
 
-  const getCartCount = useCallback(() => {
-    const count = getCartTotalItems();
-    return count > 0 ? count : null;
-  }, [getCartTotalItems]);
-
-  const getInitials = useCallback((name) => {
-    if (!name) return 'U';
-    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-  }, []);
-
   // ============================================================
   // Component JSX
   // ============================================================
   return (
     <>
-      <nav className={`
-        sticky top-0 z-50 transition-all duration-300 border-b border-gray-100
-        ${isScrolled 
-          ? 'bg-white/95 backdrop-blur-md shadow-lg' 
-          : 'bg-white/90 backdrop-blur-sm'
-        }
-      `}>
+      <nav 
+        className={`
+          sticky top-0 z-50 transition-all duration-300 border-b border-gray-100
+          ${isScrolled 
+            ? 'bg-white/95 backdrop-blur-md shadow-lg' 
+            : 'bg-white/90 backdrop-blur-sm'
+          }
+        `}
+        role="navigation"
+        aria-label="Main navigation"
+      >
         <div className="container mx-auto flex items-center justify-between px-4 py-3 md:py-4 lg:px-8">
           
           {/* ===== Logo ===== */}
@@ -223,20 +258,24 @@ export const Navbar = () => {
             {/* Profile Dropdown */}
             <div className="relative" ref={dropdownRef}>
               <button
-                onClick={() => setIsProfileDropdownOpen(prev => !prev)}
+                onClick={handleProfileDropdownToggle}
                 className="flex items-center gap-2 p-1 hover:scale-110 transition-transform duration-200 focus:outline-none focus:ring-2 focus:ring-black/20 rounded-full"
                 aria-label="User profile"
                 aria-expanded={isProfileDropdownOpen}
+                aria-haspopup="true"
               >
                 {isAuthenticated && user?.avatar ? (
                   <img 
                     src={user.avatar} 
                     className="w-8 h-8 rounded-full object-cover border-2 border-gray-200"
-                    alt={user.name}
+                    alt={user.name || 'User avatar'}
+                    onError={(e) => {
+                      e.target.style.display = 'none';
+                    }}
                   />
                 ) : isAuthenticated ? (
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-black to-gray-700 text-white flex items-center justify-center text-xs font-medium">
-                    {getInitials(user?.name)}
+                    {userInitials}
                   </div>
                 ) : (
                   <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -249,6 +288,8 @@ export const Navbar = () => {
               {isProfileDropdownOpen && (
                 <div 
                   className="absolute right-0 mt-3 w-64 py-2 bg-white border border-gray-100 rounded-xl shadow-2xl z-20 animate-slideDown"
+                  role="menu"
+                  aria-label="User menu"
                 >
                   {isAuthenticated ? (
                     <>
@@ -263,7 +304,7 @@ export const Navbar = () => {
                             />
                           ) : (
                             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-black to-gray-700 text-white flex items-center justify-center text-sm font-medium">
-                              {getInitials(user?.name)}
+                              {userInitials}
                             </div>
                           )}
                           <div className="flex-1 min-w-0">
@@ -281,8 +322,9 @@ export const Navbar = () => {
                         to="/profile"
                         onClick={() => setIsProfileDropdownOpen(false)}
                         className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 hover:text-black transition-colors"
+                        role="menuitem"
                       >
-                        <span className="text-lg">👤</span>
+                        <span className="text-lg" aria-hidden="true">👤</span>
                         My Profile
                       </Link>
                       
@@ -290,8 +332,9 @@ export const Navbar = () => {
                         to="/orders"
                         onClick={() => setIsProfileDropdownOpen(false)}
                         className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 hover:text-black transition-colors"
+                        role="menuitem"
                       >
-                        <span className="text-lg">📦</span>
+                        <span className="text-lg" aria-hidden="true">📦</span>
                         My Orders
                       </Link>
                       
@@ -299,8 +342,9 @@ export const Navbar = () => {
                         to="/wishlist"
                         onClick={() => setIsProfileDropdownOpen(false)}
                         className="flex items-center gap-3 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 hover:text-black transition-colors"
+                        role="menuitem"
                       >
-                        <span className="text-lg">❤️</span>
+                        <span className="text-lg" aria-hidden="true">❤️</span>
                         Wishlist
                       </Link>
                       
@@ -309,8 +353,9 @@ export const Navbar = () => {
                       <button
                         onClick={handleLogout}
                         className="flex items-center gap-3 w-full px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                        role="menuitem"
                       >
-                        <span className="text-lg">🚪</span>
+                        <span className="text-lg" aria-hidden="true">🚪</span>
                         Logout
                       </button>
                     </>
@@ -320,16 +365,18 @@ export const Navbar = () => {
                         to="/login"
                         onClick={() => setIsProfileDropdownOpen(false)}
                         className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 hover:text-black transition-colors"
+                        role="menuitem"
                       >
-                        <span className="text-lg">🔑</span>
+                        <span className="text-lg" aria-hidden="true">🔑</span>
                         Sign In
                       </Link>
                       <Link
                         to="/register"
                         onClick={() => setIsProfileDropdownOpen(false)}
                         className="flex items-center gap-3 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 hover:text-black transition-colors"
+                        role="menuitem"
                       >
-                        <span className="text-lg">📝</span>
+                        <span className="text-lg" aria-hidden="true">📝</span>
                         Create Account
                       </Link>
                     </>
@@ -342,16 +389,16 @@ export const Navbar = () => {
             <Link 
               to="/cart" 
               className="relative p-1 hover:scale-110 transition-transform duration-200 group"
-              aria-label="Shopping cart"
+              aria-label={`Shopping cart ${cartCount ? `(${cartCount} items)` : ''}`}
             >
               <svg className="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z" />
               </svg>
               
               {/* Cart Badge */}
-              {getCartCount() > 0 && (
+              {cartCount && (
                 <span className="absolute -top-1 -right-1 flex items-center justify-center min-w-[20px] h-5 px-1 bg-black text-white text-[10px] font-bold rounded-full shadow-lg animate-bounceIn">
-                  {getCartCount() > 99 ? '99+' : getCartCount()}
+                  {cartCount > 99 ? '99+' : cartCount}
                 </span>
               )}
             </Link>
@@ -362,6 +409,7 @@ export const Navbar = () => {
               className="sm:hidden p-1.5 hover:opacity-70 transition-opacity duration-200 focus:outline-none focus:ring-2 focus:ring-black/20 rounded"
               aria-label={isMobileMenuOpen ? 'Close menu' : 'Open menu'}
               aria-expanded={isMobileMenuOpen}
+              aria-controls="mobile-menu"
             >
               <div className="w-6 h-5 flex flex-col justify-between">
                 <span className={`block h-0.5 bg-black transition-all duration-300 ${isMobileMenuOpen ? 'rotate-45 translate-y-2' : ''}`} />
@@ -373,12 +421,14 @@ export const Navbar = () => {
         </div>
 
         {/* ===== Search Bar ===== */}
-        <div className={`
-          overflow-hidden transition-all duration-300 ease-in-out
-          ${isSearchOpen ? 'max-h-20 opacity-100' : 'max-h-0 opacity-0'}
-        `}>
+        <div 
+          className={`
+            overflow-hidden transition-all duration-300 ease-in-out
+            ${isSearchOpen ? 'max-h-20 opacity-100' : 'max-h-0 opacity-0'}
+          `}
+        >
           <div className="container mx-auto px-4 pb-4">
-            <form onSubmit={handleSearchSubmit} className="relative">
+            <form onSubmit={handleSearchSubmit} className="relative" role="search">
               <input
                 ref={searchRef}
                 type="text"
@@ -387,6 +437,7 @@ export const Navbar = () => {
                 placeholder="Search for products..."
                 className="w-full py-3 px-4 pr-12 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-black/20 focus:border-black transition-all"
                 aria-label="Search products"
+                autoComplete="off"
               />
               <button
                 type="submit"
@@ -416,6 +467,8 @@ export const Navbar = () => {
 
         {/* Sidebar panel */}
         <div 
+          id="mobile-menu"
+          ref={mobileMenuRef}
           className={`
             sm:hidden fixed top-0 right-0 bottom-0 w-full max-w-sm bg-white z-50 
             transition-transform duration-300 ease-in-out shadow-2xl
@@ -451,10 +504,13 @@ export const Navbar = () => {
                       src={user.avatar} 
                       className="w-10 h-10 rounded-full object-cover"
                       alt={user.name}
+                      onError={(e) => {
+                        e.target.style.display = 'none';
+                      }}
                     />
                   ) : (
                     <div className="w-10 h-10 rounded-full bg-gradient-to-br from-black to-gray-700 text-white flex items-center justify-center text-sm font-medium">
-                      {getInitials(user?.name)}
+                      {userInitials}
                     </div>
                   )}
                   <div>
@@ -475,7 +531,7 @@ export const Navbar = () => {
                   className={getMobileNavLinkClass}
                   aria-current="page"
                 >
-                  <span className="text-lg">{icon}</span>
+                  <span className="text-lg" aria-hidden="true">{icon}</span>
                   {label}
                 </NavLink>
               ))}

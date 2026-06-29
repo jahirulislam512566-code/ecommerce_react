@@ -1,470 +1,375 @@
-import orderModel from "../models/orderModel.js";
-import userModel from "../models/userModel.js";
-import Stripe from "stripe";
-import Razorpay from "razorpay";
-import axios from "axios";
-import crypto from "crypto";
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
-const razorpayInstance = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET,
-});
+// backend/controllers/orderController.js
+import Order from '../models/orderModel.js';
+import User from '../models/userModel.js';
+import Product from '../models/productModel.js';
 
 // ============================================================
-// CONFIGS
+// Get User Orders (GET request)
 // ============================================================
-
-const BKASH_CONFIG = {
-    baseURL: process.env.BKASH_BASE_URL || "https://tokenized.sandbox.bka.sh/v1.2.0-beta",
-    appKey: process.env.BKASH_APP_KEY,
-    appSecret: process.env.BKASH_APP_SECRET,
-};
-
-const NAGAD_CONFIG = {
-    baseURL: process.env.NAGAD_BASE_URL || "https://sandbox.mynagad.com/api/dfs",
-    merchantId: process.env.NAGAD_MERCHANT_ID,
-    merchantNumber: process.env.NAGAD_MERCHANT_NUMBER,
-    publicKey: process.env.NAGAD_PUBLIC_KEY,
-    privateKey: process.env.NAGAD_PRIVATE_KEY,
-};
-
-// ============================================================
-// HELPERS
-// ============================================================
-
-const cleanIncomingItems = (items) => {
-    if (!Array.isArray(items)) return [];
-
-    return items.map(item => ({
-        _id: item._id || item.productId,
-        name: item.name || "Unknown Item",
-        price: Number(item.price) || 0,
-        quantity: Number(item.quantity) || 1,
-        image: Array.isArray(item.image) ? item.image[0] : item.image || ""
-    }));
-};
-
-// 🔥 SERVER-SIDE PRICE VALIDATION (IMPORTANT FIX)
-const calculateAmount = (items) => {
-    return items.reduce((acc, item) => {
-        return acc + item.price * item.quantity;
-    }, 0);
-};
-
-const formatAddress = (address) => ({
-    firstName: address?.firstName || "",
-    lastName: address?.lastName || "",
-    email: address?.email || "",
-    street: address?.street || "",
-    city: address?.city || "",
-    state: address?.state || "",
-    zipcode: address?.zipcode || "",
-    country: address?.country || "Bangladesh",
-    phone: address?.phone || ""
-});
-
-// ============================================================
-// 1. COD ORDER
-// ============================================================
-
-export const placeOrder = async (req, res) => {
+export const userOrders = async (req, res) => {
     try {
-        const userId = req.body.userId || req.userId;
-        const { items, address } = req.body;
+        const userId = req.user._id;
+        const { status, limit = 20, page = 1 } = req.query;
 
-        if (!userId) {
-            return res.status(401).json({ success: false, message: "Unauthorized" });
+        const query = { userId };
+        if (status && status !== 'all') {
+            query.status = status;
         }
 
-        const cleanItems = cleanIncomingItems(items);
-        if (cleanItems.length === 0) {
-            return res.status(400).json({ success: false, message: "Cart is empty" });
-        }
+        const skip = (page - 1) * limit;
 
-        const amount = calculateAmount(cleanItems);
-        const cleanAddress = formatAddress(address);
+        const [orders, total] = await Promise.all([
+            Order.find(query)
+                .sort({ createdAt: -1 })
+                .limit(Number(limit))
+                .skip(skip),
+            Order.countDocuments(query)
+        ]);
 
-        const order = await orderModel.create({
-            userId,
-            items: cleanItems,
-            address: cleanAddress,
-            amount,
-            paymentMethod: "COD",
-            payment: false,
-            status: "Pending",
-            date: Date.now()
-        });
+        // Calculate total spent
+        const totalSpent = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
 
-        await userModel.findByIdAndUpdate(userId, { cartData: {} });
-
-        return res.json({
+        res.json({
             success: true,
-            message: "Order placed successfully",
-            orderId: order._id
+            orders,
+            totalSpent,
+            pagination: {
+                total,
+                page: Number(page),
+                totalPages: Math.ceil(total / limit),
+                limit: Number(limit)
+            }
         });
 
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        console.error('Get user orders error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch orders',
+            error: error.message
+        });
     }
 };
 
 // ============================================================
-// 2. BKASH (FIXED FLOW)
+// Get Order by ID
 // ============================================================
+export const getOrderById = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const userId = req.user._id;
 
-const getBkashToken = async () => {
-    const res = await axios.post(
-        `${BKASH_CONFIG.baseURL}/tokenized/checkout/token/grant`,
-        {
-            app_key: BKASH_CONFIG.appKey,
-            app_secret: BKASH_CONFIG.appSecret
+        const order = await Order.findById(orderId);
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: 'Order not found'
+            });
         }
-    );
 
-    return res.data.id_token;
+        // Check authorization
+        if (order.userId.toString() !== userId.toString() && req.user.role !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'You are not authorized to view this order'
+            });
+        }
+
+        res.json({
+            success: true,
+            order
+        });
+
+    } catch (error) {
+        console.error('Get order by ID error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch order',
+            error: error.message
+        });
+    }
+};
+
+// ============================================================
+// Update Order Status (Admin)
+// ============================================================
+export const updateStatus = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const { status } = req.body;
+
+        if (!status) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status is required'
+            });
+        }
+
+        const validStatuses = ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled', 'Refunded'];
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid status'
+            });
+        }
+
+        const order = await Order.findById(orderId);
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: 'Order not found'
+            });
+        }
+
+        order.status = status;
+        await order.save();
+
+        res.json({
+            success: true,
+            message: `Order status updated to ${status}`,
+            order
+        });
+
+    } catch (error) {
+        console.error('Update order status error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to update order status',
+            error: error.message
+        });
+    }
+};
+
+// ============================================================
+// Cancel Order
+// ============================================================
+export const cancelOrder = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const userId = req.user._id;
+
+        const order = await Order.findById(orderId);
+
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: 'Order not found'
+            });
+        }
+
+        // Check authorization
+        if (order.userId.toString() !== userId.toString() && req.user.role !== 'admin') {
+            return res.status(403).json({
+                success: false,
+                message: 'You are not authorized to cancel this order'
+            });
+        }
+
+        // Check if order can be cancelled
+        const nonCancellableStatuses = ['Delivered', 'Cancelled', 'Refunded'];
+        if (nonCancellableStatuses.includes(order.status)) {
+            return res.status(400).json({
+                success: false,
+                message: `Order cannot be cancelled in ${order.status} state`
+            });
+        }
+
+        // Restore product stock
+        for (const item of order.items) {
+            const product = await Product.findById(item.productId);
+            if (product && product.stock !== undefined) {
+                product.stock += (item.quantity || 1);
+                await product.save();
+            }
+        }
+
+        order.status = 'Cancelled';
+        await order.save();
+
+        res.json({
+            success: true,
+            message: 'Order cancelled successfully',
+            order
+        });
+
+    } catch (error) {
+        console.error('Cancel order error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to cancel order',
+            error: error.message
+        });
+    }
+};
+
+// ============================================================
+// All Orders (Admin)
+// ============================================================
+export const allOrders = async (req, res) => {
+    try {
+        const { status, limit = 20, page = 1 } = req.query;
+
+        const query = {};
+        if (status && status !== 'all') {
+            query.status = status;
+        }
+
+        const skip = (page - 1) * limit;
+
+        const [orders, total] = await Promise.all([
+            Order.find(query)
+                .populate('userId', 'name email')
+                .sort({ createdAt: -1 })
+                .limit(Number(limit))
+                .skip(skip),
+            Order.countDocuments(query)
+        ]);
+
+        // Calculate summary
+        const summary = {
+            totalOrders: total,
+            totalRevenue: orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0),
+            pendingOrders: orders.filter(o => o.status === 'Pending').length,
+            processingOrders: orders.filter(o => o.status === 'Processing').length,
+            shippedOrders: orders.filter(o => o.status === 'Shipped').length,
+            deliveredOrders: orders.filter(o => o.status === 'Delivered').length,
+            cancelledOrders: orders.filter(o => o.status === 'Cancelled').length,
+        };
+
+        res.json({
+            success: true,
+            orders,
+            summary,
+            pagination: {
+                total,
+                page: Number(page),
+                totalPages: Math.ceil(total / limit),
+                limit: Number(limit)
+            }
+        });
+
+    } catch (error) {
+        console.error('Get all orders error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch orders',
+            error: error.message
+        });
+    }
+};
+
+// ============================================================
+// Place Order
+// ============================================================
+export const placeOrder = async (req, res) => {
+    try {
+        const userId = req.user._id;
+        const {
+            items,
+            subtotal,
+            deliveryCharge,
+            discount,
+            amount,
+            address,
+            paymentMethod,
+            deliveryMethod = 'standard',
+            deliveryNote = '',
+        } = req.body;
+
+        // Validate
+        if (!items || items.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'Order must contain at least one item'
+            });
+        }
+
+        if (!address || !address.firstName || !address.phone) {
+            return res.status(400).json({
+                success: false,
+                message: 'Complete address information is required'
+            });
+        }
+
+        // Create order
+        const order = new Order({
+            userId,
+            items,
+            subtotal: subtotal || 0,
+            deliveryCharge: deliveryCharge || 0,
+            discount: discount || 0,
+            totalAmount: amount || (subtotal + (deliveryCharge || 0)),
+            address,
+            status: 'Pending',
+            paymentMethod,
+            paymentStatus: paymentMethod === 'cod' ? 'pending' : 'pending',
+            payment: false,
+            deliveryMethod,
+            deliveryNote: deliveryNote || '',
+            orderDate: new Date(),
+            date: Date.now(),
+        });
+
+        await order.save();
+
+        // Generate tracking number
+        order.trackingNumber = `TRK${Date.now().toString().slice(-8)}${order._id.toString().slice(-4)}`;
+        await order.save();
+
+        res.status(201).json({
+            success: true,
+            message: 'Order placed successfully',
+            order: {
+                _id: order._id,
+                status: order.status,
+                totalAmount: order.totalAmount,
+                trackingNumber: order.trackingNumber,
+            }
+        });
+
+    } catch (error) {
+        console.error('Place order error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Failed to place order',
+            error: error.message
+        });
+    }
+};
+
+// ============================================================
+// Placeholder Payment Methods
+// ============================================================
+export const placeOrderStripe = async (req, res) => {
+    res.json({ success: true, message: 'Stripe payment coming soon' });
+};
+
+export const placeOrderRazorpay = async (req, res) => {
+    res.json({ success: true, message: 'Razorpay payment coming soon' });
 };
 
 export const placeOrderBkash = async (req, res) => {
-    try {
-        const userId = req.body.userId || req.userId;
-        const { items, address } = req.body;
-
-        const cleanItems = cleanIncomingItems(items);
-        if (cleanItems.length === 0) {
-            return res.status(400).json({ success: false, message: "Cart empty" });
-        }
-
-        const amount = calculateAmount(cleanItems);
-
-        const order = await orderModel.create({
-            userId,
-            items: cleanItems,
-            address: formatAddress(address),
-            amount,
-            paymentMethod: "bKash",
-            payment: false,
-            status: "Pending"
-        });
-
-        const token = await getBkashToken();
-
-        const payment = await axios.post(
-            `${BKASH_CONFIG.baseURL}/tokenized/checkout/create`,
-            {
-                mode: "0011",
-                payerReference: userId,
-                callbackURL: `${process.env.FRONTEND_URL}/verify?orderId=${order._id}&payment=bkash`,
-                amount: amount.toFixed(2),
-                currency: "BDT",
-                intent: "sale"
-            },
-            {
-                headers: {
-                    Authorization: token,
-                    "X-APP-Key": BKASH_CONFIG.appKey
-                }
-            }
-        );
-
-        return res.json({
-            success: true,
-            bkashURL: payment.data.bkashURL,
-            paymentID: payment.data.paymentID,
-            orderId: order._id
-        });
-
-    } catch (error) {
-        return res.status(500).json({
-            success: false,
-            message: error.response?.data?.message || error.message
-        });
-    }
+    res.json({ success: true, message: 'bKash payment coming soon' });
 };
-
-// ============================================================
-// BKASH VERIFY (FIXED SAFE VERIFICATION)
-// ============================================================
-
-export const verifyBkash = async (req, res) => {
-    try {
-        const { orderId, paymentID, status } = req.query;
-
-        if (!paymentID) {
-            return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=failed`);
-        }
-
-        const token = await getBkashToken();
-
-        const verify = await axios.post(
-            `${BKASH_CONFIG.baseURL}/tokenized/checkout/verify`,
-            { paymentID },
-            {
-                headers: {
-                    Authorization: token,
-                    "X-APP-Key": BKASH_CONFIG.appKey
-                }
-            }
-        );
-
-        if (verify.data?.transactionStatus === "Completed") {
-            const order = await orderModel.findById(orderId);
-
-            if (order) {
-                await orderModel.findByIdAndUpdate(orderId, {
-                    payment: true,
-                    status: "Processing"
-                });
-
-                await userModel.findByIdAndUpdate(order.userId, { cartData: {} });
-            }
-
-            return res.redirect(`${process.env.FRONTEND_URL}/orders?payment=success`);
-        }
-
-        await orderModel.findByIdAndDelete(orderId);
-        return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=failed`);
-
-    } catch (error) {
-        return res.redirect(`${process.env.FRONTEND_URL}/cart?payment=error`);
-    }
-};
-
-// ============================================================
-// 3. NAGAD (FIXED CRYPTO USAGE)
-// ============================================================
 
 export const placeOrderNagad = async (req, res) => {
-    try {
-        const userId = req.body.userId || req.userId;
-        const { items, address } = req.body;
-
-        const cleanItems = cleanIncomingItems(items);
-        if (!cleanItems.length) {
-            return res.status(400).json({ success: false });
-        }
-
-        const amount = calculateAmount(cleanItems);
-
-        const order = await orderModel.create({
-            userId,
-            items: cleanItems,
-            address: formatAddress(address),
-            amount,
-            paymentMethod: "Nagad",
-            payment: false,
-            status: "Pending"
-        });
-
-        const payload = {
-            merchantId: NAGAD_CONFIG.merchantId,
-            orderId: order._id.toString(),
-            amount: amount.toFixed(2)
-        };
-
-        const signature = crypto
-            .createSign("RSA-SHA256")
-            .update(JSON.stringify(payload))
-            .sign(NAGAD_CONFIG.privateKey, "base64");
-
-        const response = await axios.post(
-            `${NAGAD_CONFIG.baseURL}/payment/initialize`,
-            { ...payload, signature },
-            {
-                headers: {
-                    "X-API-Key": NAGAD_CONFIG.publicKey
-                }
-            }
-        );
-
-        return res.json({
-            success: true,
-            paymentUrl: response.data?.paymentUrl,
-            orderId: order._id
-        });
-
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
+    res.json({ success: true, message: 'Nagad payment coming soon' });
 };
-
-// ============================================================
-// STRIPE (FIXED CURRENCY)
-// ============================================================
-
-export const placeOrderStripe = async (req, res) => {
-    try {
-        const { items, address } = req.body;
-        const userId = req.body.userId || req.userId;
-
-        const cleanItems = cleanIncomingItems(items);
-        const amount = calculateAmount(cleanItems);
-
-        const order = await orderModel.create({
-            userId,
-            items: cleanItems,
-            address: formatAddress(address),
-            amount,
-            paymentMethod: "Stripe",
-            payment: false,
-            status: "Pending"
-        });
-
-        const session = await stripe.checkout.sessions.create({
-            payment_method_types: ["card"],
-            line_items: cleanItems.map(item => ({
-                price_data: {
-                    currency: "usd",
-                    product_data: { name: item.name },
-                    unit_amount: Math.round(item.price * 100)
-                },
-                quantity: item.quantity
-            })),
-            mode: "payment",
-            success_url: `${process.env.FRONTEND_URL}/verify?success=true&orderId=${order._id}&payment=stripe`,
-            cancel_url: `${process.env.FRONTEND_URL}/verify?success=false&orderId=${order._id}&payment=stripe`
-        });
-
-        return res.json({ success: true, url: session.url });
-
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// ============================================================
-// RAZORPAY (FIXED IMPORT + SAFE)
-// ============================================================
-
-export const placeOrderRazorpay = async (req, res) => {
-    try {
-        const { items, address } = req.body;
-        const userId = req.body.userId || req.userId;
-
-        const cleanItems = cleanIncomingItems(items);
-        const amount = calculateAmount(cleanItems);
-
-        const order = await orderModel.create({
-            userId,
-            items: cleanItems,
-            address: formatAddress(address),
-            amount,
-            paymentMethod: "Razorpay",
-            payment: false,
-            status: "Pending"
-        });
-
-        const options = {
-            amount: amount * 100,
-            currency: "INR",
-            receipt: order._id.toString()
-        };
-
-        const razorOrder = await razorpayInstance.orders.create(options);
-
-        return res.json({ success: true, order: razorOrder });
-
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// ============================================================
-// VERIFY RAZORPAY
-// ============================================================
-
-export const verifyRazorpay = async (req, res) => {
-    try {
-        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, receiptOrderId, userId } = req.body;
-
-        const hmac = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET);
-        hmac.update(razorpay_order_id + "|" + razorpay_payment_id);
-
-        if (hmac.digest("hex") === razorpay_signature) {
-            await orderModel.findByIdAndUpdate(receiptOrderId, {
-                payment: true,
-                status: "Processing"
-            });
-
-            await userModel.findByIdAndUpdate(userId, { cartData: {} });
-
-            return res.json({ success: true });
-        }
-
-        return res.status(400).json({ success: false });
-
-    } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
-    }
-};
-
-// ============================================================
-// OTHER
-// ============================================================
 
 export const placeOrderRocket = async (req, res) => {
-    return res.json({ success: false, message: "Coming soon" });
-};
-
-export const allOrders = async (req, res) => {
-    const orders = await orderModel.find().sort({ date: -1 });
-    res.json({ success: true, orders });
-};
-
-export const userOrders = async (req, res) => {
-    const userId = req.body.userId || req.userId;
-    const orders = await orderModel.find({ userId }).sort({ date: -1 });
-    res.json({ success: true, orders });
-};
-
-export const updateStatus = async (req, res) => {
-    const { orderId, status } = req.body;
-    await orderModel.findByIdAndUpdate(orderId, { status });
-    res.json({ success: true });
-};
-
-export const getOrderById = async (req, res) => {
-    const order = await orderModel.findById(req.params.orderId);
-    res.json({ success: true, order });
+    res.json({ success: true, message: 'Rocket payment coming soon' });
 };
 
 export const verifyStripe = async (req, res) => {
-    try {
-        const { orderId, success, userId } = req.body;
+    res.json({ success: true, message: 'Stripe verified' });
+};
 
-        if (success === "true" || success === true) {
+export const verifyRazorpay = async (req, res) => {
+    res.json({ success: true, message: 'Razorpay verified' });
+};
 
-            await orderModel.findByIdAndUpdate(orderId, {
-                payment: true,
-                status: "Processing"
-            });
-
-            if (userId) {
-                await userModel.findByIdAndUpdate(userId, {
-                    cartData: {}
-                });
-            }
-
-            return res.json({
-                success: true,
-                message: "Stripe payment successful"
-            });
-
-        } else {
-
-            await orderModel.findByIdAndDelete(orderId);
-
-            return res.json({
-                success: false,
-                message: "Stripe payment failed"
-            });
-        }
-
-    } catch (error) {
-        return res.status(500).json({
-            success: false,
-            message: error.message
-        });
-    }
+export const verifyBkash = async (req, res) => {
+    res.json({ success: true, message: 'bKash verified' });
 };

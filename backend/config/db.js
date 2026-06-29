@@ -1,24 +1,34 @@
-
 import mongoose from "mongoose";
-import dotenv from "dotenv"; 
 
-dotenv.config();
+const MONGODB_URI = process.env.MONGODB_URI;
+
+// This global object persists across hot-reloads in development 
+// and remains in memory during function 'warm' periods
+let cached = global.mongoose;
+
+if (!cached) {
+  cached = global.mongoose = { conn: null, promise: null };
+}
 
 const connectDB = async () => {
-    try {
-        mongoose.connection.on('connected', () => {
-            console.log("DB Connected successfully to NexusBD");
-        });
+  if (cached.conn) {
+    return cached.conn;
+  }
 
-        // Pass the dbName explicitly in the options object
-        await mongoose.connect(process.env.MONGODB_URI, {
-            dbName: 'nexusbd' 
-        });
-        
-    } catch (error) {
-        console.error(`Database Connection Error: ${error.message}`);
-        process.exit(1);
-    }
+  if (!cached.promise) {
+    const opts = {
+      bufferCommands: false,
+      dbName: 'nexusbd',
+    };
+
+    cached.promise = mongoose.connect(MONGODB_URI, opts).then((mongoose) => {
+      console.log("DB Connected successfully to NexusBD");
+      return mongoose;
+    });
+  }
+  
+  cached.conn = await cached.promise;
+  return cached.conn;
 };
 
 export default connectDB;

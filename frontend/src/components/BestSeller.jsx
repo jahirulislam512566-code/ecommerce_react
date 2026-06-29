@@ -1,7 +1,8 @@
 import React, { useMemo, useCallback, useState, useEffect } from 'react';
 import { useShop } from '../context/ShopContext';
 import { Title } from './Title';
-import { ProductItem, ProductItemSkeleton } from './ProductItem';
+import  ProductItem from './ProductItem';
+import  ProductItemSkeleton from './ProductItemSkeleton';
 
 // ============================================================
 // Constants

@@ -2,9 +2,9 @@
 import axios from 'axios';
 
 // ✅ FIXED: Use the correct API URL structure
-// Your backend is on Vercel at: https://backend-five-sigma-91.vercel.app
+// Your backend is on Vercel at: https://ecommerce-react-gold-one.vercel.app
 // The routes show: /api/product, /api/cart, /api/order, etc.
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://backend-five-sigma-91.vercel.app/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000/api';
 
 export const createProduct = async (productData, token) => {
   const config = {

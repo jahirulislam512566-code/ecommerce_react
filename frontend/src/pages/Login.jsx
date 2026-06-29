@@ -133,7 +133,13 @@ export const Login = ({
 }) => {
   // --- Hooks ---
   const navigate = useNavigate();
-  const { token, setToken, isAuthenticated } = useShop(); // ✅ Use setToken directly
+  const shopContext = useShop();
+  const { token, isAuthenticated } = shopContext;
+  
+  // ✅ Get setToken safely - check if it exists
+  const setToken = shopContext.setToken || null;
+  const setUser = shopContext.setUser || null;
+  
   const formRef = useRef(null);
 
   // --- State ---
@@ -236,22 +242,38 @@ export const Login = ({
         ? { name: name.trim(), email: email.toLowerCase().trim(), password }
         : { email: email.toLowerCase().trim(), password };
 
+      console.log(`📤 ${currentState} request:`, { email, endpoint });
+
       const response = await axios.post(`${backendUrl}${endpoint}`, payload, {
         timeout: 15000,
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
+
+      console.log('📥 Auth response:', response.data);
 
       if (response.data.success) {
         const { token: responseToken, user } = response.data;
 
         // ✅ Save token using setToken from context
         if (responseToken) {
-          localStorage.setItem('token', responseToken);
-          setToken(responseToken); // ✅ Now this works because setToken is exposed
+          localStorage.setItem('ecom_token', responseToken);
+          
+          // ✅ Use setToken if available, otherwise handle it
+          if (setToken) {
+            setToken(responseToken);
+          } else {
+            console.warn('⚠️ setToken not available in context. Token saved to localStorage only.');
+          }
         }
 
         // Save user data
         if (user) {
-          localStorage.setItem('user', JSON.stringify(user));
+          localStorage.setItem('ecom_user_data', JSON.stringify(user));
+          if (setUser) {
+            setUser(user);
+          }
         }
 
         // Remember email
@@ -273,12 +295,14 @@ export const Login = ({
         }
 
         // Navigate to redirectTo
-        navigate(redirectTo);
+        setTimeout(() => {
+          navigate(redirectTo);
+        }, 500);
       } else {
         throw new Error(response.data.message || 'Authentication failed');
       }
     } catch (error) {
-      console.error('Authentication Error:', error);
+      console.error('❌ Authentication Error:', error);
       
       let errorMessage = error.response?.data?.message || error.message;
       
@@ -286,7 +310,9 @@ export const Login = ({
       if (error.response?.status === 401) {
         errorMessage = 'Invalid email or password. Please try again.';
       } else if (error.response?.status === 409) {
-        errorMessage = 'An account with this email already exists.';
+        errorMessage = 'An account with this email already exists. Please login.';
+      } else if (error.response?.status === 400) {
+        errorMessage = error.response?.data?.message || 'Invalid input. Please check your details.';
       } else if (error.code === 'ECONNABORTED') {
         errorMessage = 'Connection timeout. Please check your internet connection.';
       } else if (error.message === 'Network Error') {
@@ -294,10 +320,15 @@ export const Login = ({
       }
 
       toast.error(errorMessage);
+      
+      // Set specific field errors if needed
+      if (error.response?.status === 409) {
+        setErrors(prev => ({ ...prev, email: 'Email already registered' }));
+      }
     } finally {
       setIsLoading(false);
     }
-  }, [formData, currentState, backendUrl, setToken, rememberMe, onSuccess, navigate, redirectTo, validateForm]);
+  }, [formData, currentState, backendUrl, setToken, setUser, rememberMe, onSuccess, navigate, redirectTo, validateForm]);
 
   const handleForgotPassword = useCallback(async () => {
     const email = formData.email;
@@ -511,12 +542,14 @@ export const Login = ({
                 <button
                   type="button"
                   className="flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
+                  onClick={() => toast.info('Google login coming soon!')}
                 >
                   <span>🔵</span> Google
                 </button>
                 <button
                   type="button"
                   className="flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
+                  onClick={() => toast.info('Twitter login coming soon!')}
                 >
                   <span>🐦</span> Twitter
                 </button>
