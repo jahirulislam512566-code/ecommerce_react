@@ -88,7 +88,8 @@ const allowedOrigins = [
     "http://127.0.0.1:5174",
     
     // Production
-    "https://frontend-rosy-eta-69.vercel.app",
+    "https://ecommerce-react-8sid-dhm6429bo.vercel.app/",
+    "https://ecommerce-react-8sid.vercel.app/",
     // Add your production URL here
     // "https://yourdomain.com",
     // "https://www.yourdomain.com",
